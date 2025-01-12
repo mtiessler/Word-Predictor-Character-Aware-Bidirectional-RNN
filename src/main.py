@@ -1,268 +1,261 @@
 import os
-import csv
 import torch
 from torch.utils.data import Dataset, DataLoader
 from torch.nn.utils.rnn import pad_sequence
 from torchtext.data.utils import get_tokenizer
-from collections import Counter
-import re
 import torch.nn as nn
+import re
+import csv
 from argparse import ArgumentParser
+from datasets import load_dataset
+from collections import Counter
 import matplotlib.pyplot as plt
+import pandas as pd
 
-# Data preprocessing
+# Utility: Clean and tokenize text
 def clean_text(text):
-    text = text.lower()
-    text = re.sub(r"[^a-zA-Z\s]", "", text)
-    return text.strip()
+    return re.sub(r"[^a-z\s]", "", text.lower()).strip()
 
-def tokenize_by_char(text):
-    return list(text)
 
-def load_vocab_and_tokenizer(data_dir):
+def build_vocab(data_dir, train_texts):
     tokenizer = get_tokenizer("basic_english")
+    counter = Counter()
 
-    def read_file(filepath):
-        with open(filepath, "r", encoding="utf-8") as f:
-            return f.readlines()
+    # Read texts from data_dir or use train_texts if provided
+    if data_dir:
+        with open(os.path.join(data_dir, "train.txt"), "r") as f:
+            for line in f:
+                counter.update(tokenizer(clean_text(line)))
+    else:
+        for line in train_texts:
+            counter.update(tokenizer(clean_text(line)))
 
-    train_path = os.path.join(data_dir, "train.txt")
-    word_counter = Counter()
-    char_counter = Counter()
+    vocab = {word: idx for idx, (word, _) in enumerate(counter.items(), start=2)}
+    vocab["<pad>"] = 0
+    vocab["<unk>"] = 1
+    return vocab, tokenizer
 
-    for line in read_file(train_path):
-        cleaned_line = clean_text(line)
-        word_counter.update(tokenizer(cleaned_line))
-        char_counter.update(tokenize_by_char(cleaned_line))
 
-    word_vocab = {word: idx for idx, (word, _) in enumerate(word_counter.items(), start=2)}
-    word_vocab["<unk>"] = 1  # Reserved for unknown words
-    char_vocab = {char: idx for idx, (char, _) in enumerate(char_counter.items(), start=2)}
-    char_vocab["<unk>"] = 1  # Reserved for unknown characters
-
-    return word_vocab, char_vocab, tokenizer
-
-class TextDataset(Dataset):
-    def __init__(self, file_path, word_vocab, char_vocab, tokenizer, max_word_len=10, max_seq_len=50):
-        with open(file_path, "r", encoding="utf-8") as f:
-            self.texts = [line.strip() for line in f.readlines()]
-
-        self.word_vocab = word_vocab
-        self.char_vocab = char_vocab
+class SimpleDataset(Dataset):
+    def __init__(self, texts, vocab, tokenizer, max_seq_len=10):
+        self.texts = [clean_text(line) for line in texts]
+        self.vocab = vocab
         self.tokenizer = tokenizer
-        self.max_word_len = max_word_len
         self.max_seq_len = max_seq_len
-        self.data = self._prepare_data()
-
-    def _prepare_data(self):
-        data = []
-        for text in self.texts:
-            cleaned_text = clean_text(text)  # Use a different variable name
-            word_tokens = [self.word_vocab.get(token, 1) for token in self.tokenizer(cleaned_text)]
-            if len(word_tokens) > 1:
-                data.append(word_tokens[:self.max_seq_len])
-        return data
 
     def __len__(self):
-        return len(self.data)
+        return len(self.texts)
 
     def __getitem__(self, idx):
-        word_seq = self.data[idx]
-        original_text = self.texts[idx]
-        tokens = self.tokenizer(original_text)[:len(word_seq)]
+        tokens = [self.vocab.get(token, 1) for token in self.tokenizer(self.texts[idx])]
+        if len(tokens) < 2:
+            tokens = [0, 0]  # Ensure valid input-target pairs
+        return torch.tensor(tokens[:-1]), torch.tensor(tokens[1:])
 
-        char_seq = [
-            [self.char_vocab.get(char, 1) for char in list(token)] for token in tokens
-        ]
-
-        char_seq = [
-            chars[:self.max_word_len] + [0] * (self.max_word_len - len(chars))
-            for chars in char_seq
-        ]
-
-        char_seq_tensor = torch.tensor(char_seq, dtype=torch.long) if char_seq else torch.zeros((1, self.max_word_len), dtype=torch.long)
-
-        return torch.tensor(word_seq[:-1]), torch.tensor(word_seq[1:]), char_seq_tensor
 
 def collate_fn(batch):
-    inputs, targets, char_inputs = zip(*batch)
+    inputs, targets = zip(*batch)
     inputs = pad_sequence(inputs, batch_first=True, padding_value=0)
     targets = pad_sequence(targets, batch_first=True, padding_value=0)
+    return inputs, targets
 
-    max_seq_len = inputs.size(1)
-    max_word_len = max((x.size(1) if x.dim() > 1 else 0) for x in char_inputs)
 
-    char_inputs_padded = torch.zeros((len(char_inputs), max_seq_len, max_word_len), dtype=torch.long)
+# Simple LSTM Model
+class SimpleLSTM(nn.Module):
+    def __init__(self, vocab_size, embed_dim, hidden_dim, num_layers):
+        super(SimpleLSTM, self).__init__()
+        self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=0)
+        self.lstm = nn.LSTM(embed_dim, hidden_dim, num_layers, batch_first=True)
+        self.fc = nn.Linear(hidden_dim, vocab_size)
 
-    for i, char_seq in enumerate(char_inputs):
-        if char_seq.dim() == 1:
-            char_seq = torch.zeros((1, max_word_len), dtype=torch.long)
-        seq_len = char_seq.size(0)
-        char_inputs_padded[i, :seq_len, :] = char_seq[:max_seq_len, :]
+    def forward(self, x):
+        x = self.embedding(x)
+        x, _ = self.lstm(x)
+        return self.fc(x)
 
-    return inputs, targets, char_inputs_padded
 
-def get_dataloaders(data_dir, word_vocab, char_vocab, tokenizer, batch_size):
-    train_path = os.path.join(data_dir, "train.txt")
-    valid_path = os.path.join(data_dir, "test.txt")
-
-    train_loader = DataLoader(
-        TextDataset(train_path, word_vocab, char_vocab, tokenizer),
-        batch_size=batch_size,
-        shuffle=True,
-        collate_fn=collate_fn,
-    )
-    val_loader = DataLoader(
-        TextDataset(valid_path, word_vocab, char_vocab, tokenizer),
-        batch_size=batch_size,
-        shuffle=False,
-        collate_fn=collate_fn,
-    )
-    return train_loader, val_loader
-
-class LSTMWithCacheAndChar(nn.Module):
-    def __init__(self, word_vocab_size, char_vocab_size, word_embed_dim, char_embed_dim, hidden_dim, char_hidden_dim, num_layers, cache_size, max_word_len):
-        super(LSTMWithCacheAndChar, self).__init__()
-        self.word_embedding = nn.Embedding(word_vocab_size, word_embed_dim)
-        self.char_embedding = nn.Embedding(char_vocab_size, char_embed_dim)
-        self.char_lstm = nn.LSTM(char_embed_dim, char_hidden_dim, batch_first=True)
-        self.lstm = nn.LSTM(word_embed_dim + char_hidden_dim, hidden_dim, num_layers, batch_first=True)
-        self.fc = nn.Linear(hidden_dim, word_vocab_size)
-        self.cache = {}
-        self.cache_size = cache_size
-
-    def forward(self, word_inputs, char_inputs):
-        batch_size, seq_len, max_word_len = char_inputs.size()
-        char_inputs = torch.clamp(char_inputs, min=0, max=self.char_embedding.num_embeddings - 1)
-        char_inputs = char_inputs.view(-1, max_word_len)
-        char_embeds = self.char_embedding(char_inputs)
-        _, (char_hidden, _) = self.char_lstm(char_embeds)
-        char_hidden = char_hidden[-1].view(batch_size, seq_len, -1)
-        word_embeds = self.word_embedding(word_inputs)
-        combined_embeds = torch.cat((word_embeds, char_hidden), dim=-1)
-        lstm_out, _ = self.lstm(combined_embeds)
-        logits = self.fc(lstm_out)
-        return logits
-
-def save_results_to_csv(results, file_name):
-    with open(file_name, mode="w", newline="") as file:
-        writer = csv.writer(file)
-        writer.writerow(["Epoch", "Loss", "Accuracy"])
-        writer.writerows(results)
-
-def plot_results(file_name):
-    import pandas as pd
-
-    data = pd.read_csv(file_name)
-    plt.figure()
-
-    plt.plot(data["Epoch"], data["Loss"], label="Loss")
-    plt.plot(data["Epoch"], data["Accuracy"], label="Accuracy")
-
-    plt.xlabel("Epoch")
-    plt.ylabel("Value")
-    plt.title("Training Progress")
-    plt.legend()
-    plt.grid()
-    plt.show()
-
-def train_model(model, train_loader, optimizer, device, epochs, csv_file):
+# Training Loop
+def train_model(model, dataloader, optimizer, device, epochs, csv_file):
     criterion = nn.CrossEntropyLoss(ignore_index=0)
     model.train()
     results = []
 
     for epoch in range(epochs):
+        print(f"Starting Epoch {epoch + 1}/{epochs}...")
         total_loss = 0
-        correct_predictions = 0
-        total_predictions = 0
+        correct = 0
+        total = 0
 
-        for batch_idx, (word_inputs, targets, char_inputs) in enumerate(train_loader):
-            word_inputs, targets, char_inputs = word_inputs.to(device), targets.to(device), char_inputs.to(device)
+        for batch_idx, (inputs, targets) in enumerate(dataloader):
+            print(f"  Processing Batch {batch_idx + 1}/{len(dataloader)}...")
+            inputs, targets = inputs.to(device), targets.to(device)
             optimizer.zero_grad()
-            outputs = model(word_inputs, char_inputs)
+
+            # Forward pass
+            outputs = model(inputs)
+            print(f"    Forward Pass Complete: Outputs Shape: {outputs.shape}")
+
+            # Reshape for loss computation
             outputs = outputs.view(-1, outputs.size(-1))
             targets = targets.view(-1)
+            print(f"    Reshaped Outputs: {outputs.shape}, Targets: {targets.shape}")
+
+            # Compute loss
             loss = criterion(outputs, targets)
+            print(f"    Computed Loss: {loss.item():.4f}")
+
+            # Backward pass
             loss.backward()
+            print(f"    Backward Pass Complete.")
+
+            # Update weights
             optimizer.step()
-            predictions = torch.argmax(outputs, dim=-1)
-            correct_predictions += (predictions == targets).sum().item()
-            total_predictions += targets.size(0)
+            print(f"    Optimizer Step Complete.")
+
+            # Compute predictions
+            predictions = torch.argmax(outputs, dim=1)
+            batch_correct = (predictions == targets).sum().item()
+            batch_total = targets.size(0)
+            batch_accuracy = 100.0 * batch_correct / batch_total
+            print(f"    Batch Accuracy: {batch_accuracy:.2f}%")
+
+            # Update metrics
+            correct += batch_correct
+            total += batch_total
             total_loss += loss.item()
 
-            # Log progress
-            if batch_idx % 10 == 0:
-                print(f"Epoch [{epoch + 1}/{epochs}], Step [{batch_idx}/{len(train_loader)}], Loss: {loss.item():.4f}")
+        # Epoch metrics
+        avg_loss = total_loss / len(dataloader)
+        perplexity = torch.exp(torch.tensor(avg_loss)).item()
+        accuracy = 100.0 * correct / total
+        results.append([epoch + 1, avg_loss, perplexity, accuracy])
+        print(f"Epoch {epoch + 1}/{epochs} Summary: "
+              f"Avg Loss: {avg_loss:.4f}, Perplexity: {perplexity:.4f}, Accuracy: {accuracy:.2f}%")
 
-        train_accuracy = correct_predictions / total_predictions * 100
-        avg_loss = total_loss / len(train_loader)
-        results.append([epoch + 1, avg_loss, train_accuracy])
-        print(f"Epoch {epoch + 1}: Avg Loss: {avg_loss:.4f}, Accuracy: {train_accuracy:.2f}%")
+    # Save results to CSV
+    with open(csv_file, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["Epoch", "Loss", "Perplexity", "Accuracy"])
+        writer.writerows(results)
 
-    save_results_to_csv(results, csv_file)
+    print(f"Training Complete. Results saved to {csv_file}.")
 
-def evaluate_model(model, val_loader, device):
+# Evaluation
+def evaluate_model(model, dataloader, device):
+    criterion = nn.CrossEntropyLoss(ignore_index=0)
     model.eval()
     total_loss = 0
-    correct_predictions = 0
-    total_predictions = 0
-    criterion = nn.CrossEntropyLoss(ignore_index=0)
+    correct = 0
+    total = 0
 
+    print("Starting Evaluation...")
     with torch.no_grad():
-        for batch_idx, (word_inputs, targets, char_inputs) in enumerate(val_loader):
-            word_inputs, targets, char_inputs = word_inputs.to(device), targets.to(device), char_inputs.to(device)
-            outputs = model(word_inputs, char_inputs)
+        for batch_idx, (inputs, targets) in enumerate(dataloader):
+            print(f"  Processing Batch {batch_idx + 1}/{len(dataloader)}...")
+            inputs, targets = inputs.to(device), targets.to(device)
+
+            # Forward pass
+            outputs = model(inputs)
+            print(f"    Forward Pass Complete: Outputs Shape: {outputs.shape}")
+
+            # Reshape for loss computation
             outputs = outputs.view(-1, outputs.size(-1))
             targets = targets.view(-1)
+            print(f"    Reshaped Outputs: {outputs.shape}, Targets: {targets.shape}")
+
+            # Compute loss
             loss = criterion(outputs, targets)
             total_loss += loss.item()
-            predictions = torch.argmax(outputs, dim=-1)
-            correct_predictions += (predictions == targets).sum().item()
-            total_predictions += targets.size(0)
+            print(f"    Computed Loss: {loss.item():.4f}")
 
-            # Log progress
-            if batch_idx % 10 == 0:
-                print(f"Validation Step [{batch_idx}/{len(val_loader)}], Loss: {loss.item():.4f}")
+            # Compute predictions
+            predictions = torch.argmax(outputs, dim=1)
+            batch_correct = (predictions == targets).sum().item()
+            batch_total = targets.size(0)
+            batch_accuracy = 100.0 * batch_correct / batch_total
+            print(f"    Batch Accuracy: {batch_accuracy:.2f}%")
 
-    perplexity = torch.exp(torch.tensor(total_loss / len(val_loader)))
-    accuracy = correct_predictions / total_predictions * 100
-    print(f"Evaluation: Perplexity: {perplexity.item():.4f}, Accuracy: {accuracy:.2f}%")
-    return perplexity.item(), accuracy
+            # Update metrics
+            correct += batch_correct
+            total += batch_total
 
+    # Calculate overall metrics
+    avg_loss = total_loss / len(dataloader)
+    perplexity = torch.exp(torch.tensor(avg_loss)).item()
+    accuracy = 100.0 * correct / total
+    print(f"Evaluation Complete: Avg Loss: {avg_loss:.4f}, Perplexity: {perplexity:.4f}, Accuracy: {accuracy:.2f}%")
+    return perplexity, accuracy
+
+
+
+
+def plot_training_results(csv_file):
+    # Load data from CSV
+    data = pd.read_csv(csv_file)
+
+    # Plot accuracy and perplexity over epochs
+    plt.figure(figsize=(12, 6))
+
+    # Accuracy
+    plt.subplot(1, 2, 1)
+    plt.plot(data['Epoch'], data['Accuracy'], marker='o', label='Accuracy')
+    plt.title('Accuracy Over Epochs')
+    plt.xlabel('Epoch')
+    plt.ylabel('Accuracy (%)')
+    plt.grid(True)
+    plt.legend()
+
+    # Perplexity
+    plt.subplot(1, 2, 2)
+    plt.plot(data['Epoch'], data['Perplexity'], marker='o', label='Perplexity', color='orange')
+    plt.title('Perplexity Over Epochs')
+    plt.xlabel('Epoch')
+    plt.ylabel('Perplexity')
+    plt.grid(True)
+    plt.legend()
+
+    plt.tight_layout()
+    plt.show()
+
+# Main Function
 if __name__ == "__main__":
     parser = ArgumentParser()
-    parser.add_argument("--data_dir", type=str, default="../data/wikiText-2", help="Path to the dataset directory")
+    parser.add_argument("--data_dir", type=str, default=None, help="Path to the dataset directory")
     parser.add_argument("--batch_size", type=int, default=32, help="Batch size")
     parser.add_argument("--epochs", type=int, default=10, help="Number of epochs")
     parser.add_argument("--lr", type=float, default=0.001, help="Learning rate")
     parser.add_argument("--csv_file", type=str, default="training_results.csv", help="CSV file to save training results")
     args = parser.parse_args()
 
+    if args.data_dir:
+        print("Using custom dataset...")
+        train_texts = open(os.path.join(args.data_dir, "train.txt"), "r").readlines()
+        val_texts = open(os.path.join(args.data_dir, "test.txt"), "r").readlines()
+    else:
+        print("Using Hugging Face's official wikitext-2 dataset...")
+        dataset = load_dataset("wikitext", "wikitext-2-raw-v1")
+        train_texts = dataset["train"]["text"]
+        val_texts = dataset["validation"]["text"]
+
+    # Prepare vocabulary and datasets
+    vocab, tokenizer = build_vocab(args.data_dir, train_texts)
+    train_dataset = SimpleDataset(train_texts, vocab, tokenizer)
+    val_dataset = SimpleDataset(val_texts, vocab, tokenizer)
+
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, collate_fn=collate_fn, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, collate_fn=collate_fn)
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    print("Loading Vocabulary and Tokenizer...")
-    word_vocab, char_vocab, tokenizer = load_vocab_and_tokenizer(args.data_dir)
-    print(f"Word Vocab Size: {len(word_vocab)}, Char Vocab Size: {len(char_vocab)}")
-
-    print("Preparing Data Loaders...")
-    train_loader, val_loader = get_dataloaders(args.data_dir, word_vocab, char_vocab, tokenizer, args.batch_size)
-
-    print("Initializing Model...")
-    model = LSTMWithCacheAndChar(
-        len(word_vocab), len(char_vocab), 128, 32, 256, 64, 2, cache_size=500, max_word_len=10
-    ).to(device)
-
+    # Initialize model
+    model = SimpleLSTM(vocab_size=len(vocab), embed_dim=128, hidden_dim=256, num_layers=2).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
-    print("Starting Training...")
-    train_model(model, train_loader, optimizer, device, args.epochs, args.csv_file)
-
-    print("Evaluating the Model...")
+    # Train and evaluate
+    results = train_model(model, train_loader, optimizer, device, args.epochs, args.csv_file)
     perplexity, accuracy = evaluate_model(model, val_loader, device)
+    print(f"Final Results: Perplexity: {perplexity:.4f}, Accuracy: {accuracy:.2f}%")
 
-    print("Final Evaluation Results:")
-    print(f"Perplexity: {perplexity:.4f}, Accuracy: {accuracy:.2f}%")
-
-    print("Plotting Training Results...")
-    plot_results(args.csv_file)
+    # Visualize results
+    plot_training_results(args.csv_file)
