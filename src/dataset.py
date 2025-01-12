@@ -5,6 +5,7 @@ from torchtext.datasets import WikiText2
 from torchtext.data.utils import get_tokenizer
 from collections import Counter
 import re
+import shutil
 
 
 def clean_text(text):
@@ -18,8 +19,13 @@ def tokenize_by_char(text):
 
 
 def load_vocab_and_tokenizer():
-    tokenizer = get_tokenizer("basic_english")
-    train_iter = WikiText2(split="train")
+    try:
+        tokenizer = get_tokenizer("basic_english")
+        train_iter = WikiText2(split="train")
+    except RuntimeError:
+        print("Hash mismatch or corrupted dataset detected. Clearing cache and retrying...")
+        shutil.rmtree(".data/WikiText2", ignore_errors=True)
+        train_iter = WikiText2(split="train")
 
     word_counter = Counter()
     char_counter = Counter()
@@ -29,8 +35,8 @@ def load_vocab_and_tokenizer():
         word_counter.update(tokenizer(clean_line))
         char_counter.update(tokenize_by_char(clean_line))
 
-    word_vocab = Counter(word_counter)
-    char_vocab = Counter(char_counter)
+    word_vocab = {word: idx for idx, (word, _) in enumerate(word_counter.items(), start=1)}
+    char_vocab = {char: idx for idx, (char, _) in enumerate(char_counter.items(), start=1)}
 
     return word_vocab, char_vocab, tokenizer
 
@@ -78,8 +84,15 @@ def collate_fn(batch):
 
 
 def get_dataloaders(word_vocab, char_vocab, tokenizer, batch_size):
-    train_iter = WikiText2(split="train")
-    valid_iter = WikiText2(split="valid")
+    try:
+        train_iter = WikiText2(split="train")
+        valid_iter = WikiText2(split="valid")
+    except RuntimeError:
+        print("Hash mismatch or corrupted dataset detected. Clearing cache and retrying...")
+        shutil.rmtree(".data/WikiText2", ignore_errors=True)
+        train_iter = WikiText2(split="train")
+        valid_iter = WikiText2(split="valid")
+
     train_loader = DataLoader(
         TextDataset(train_iter, word_vocab, char_vocab, tokenizer),
         batch_size=batch_size,
