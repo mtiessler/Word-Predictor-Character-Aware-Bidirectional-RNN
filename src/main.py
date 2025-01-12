@@ -1,4 +1,5 @@
 import os
+import random
 import torch
 from torch.utils.data import Dataset, DataLoader
 from torch.nn.utils.rnn import pad_sequence
@@ -222,9 +223,11 @@ if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("--data_dir", type=str, default=None, help="Path to the dataset directory")
     parser.add_argument("--batch_size", type=int, default=32, help="Batch size")
-    parser.add_argument("--epochs", type=int, default=10, help="Number of epochs")
-    parser.add_argument("--lr", type=float, default=0.001, help="Learning rate")
+    parser.add_argument("--epochs", type=int, default=5, help="Number of epochs")
+    parser.add_argument("--lr", type=float, default=0.01, help="Learning rate")
     parser.add_argument("--csv_file", type=str, default="training_results.csv", help="CSV file to save training results")
+    parser.add_argument("--subset", type=float, default=0.1, help="Fraction of the dataset to use (e.g., 0.1 for 10%)")
+
     args = parser.parse_args()
 
     if args.data_dir:
@@ -236,7 +239,11 @@ if __name__ == "__main__":
         dataset = load_dataset("wikitext", "wikitext-2-raw-v1")
         train_texts = dataset["train"]["text"]
         val_texts = dataset["validation"]["text"]
-
+    if args.subset:
+        subset_size = int(len(train_texts) * args.subset)
+        print(f"Using subset of training data: {subset_size}/{len(train_texts)} samples")
+        random.shuffle(train_texts)
+        train_texts = train_texts[:subset_size]
     # Prepare vocabulary and datasets
     vocab, tokenizer = build_vocab(args.data_dir, train_texts)
     train_dataset = SimpleDataset(train_texts, vocab, tokenizer)
