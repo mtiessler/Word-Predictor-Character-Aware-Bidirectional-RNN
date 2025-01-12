@@ -6,13 +6,16 @@ from torchtext.data.utils import get_tokenizer
 from collections import Counter
 import re
 
+
 def clean_text(text):
     text = text.lower()
     text = re.sub(r"[^a-zA-Z\s]", "", text)
     return text.strip()
 
+
 def tokenize_by_char(text):
     return list(text)
+
 
 def load_vocab_and_tokenizer():
     tokenizer = get_tokenizer("basic_english")
@@ -30,6 +33,7 @@ def load_vocab_and_tokenizer():
     char_vocab = Counter(char_counter)
 
     return word_vocab, char_vocab, tokenizer
+
 
 class TextDataset(Dataset):
     def __init__(self, texts, word_vocab, char_vocab, tokenizer, max_word_len=10, max_seq_len=50):
@@ -63,6 +67,7 @@ class TextDataset(Dataset):
         ]
         return torch.tensor(word_seq[:-1]), torch.tensor(word_seq[1:]), torch.tensor(char_seq[:-1])
 
+
 def collate_fn(batch):
     inputs, targets, char_inputs = zip(*batch)
     inputs = pad_sequence(inputs, batch_first=True, padding_value=0)
@@ -70,6 +75,7 @@ def collate_fn(batch):
     char_inputs = [torch.tensor(x) for x in char_inputs]
     char_inputs = pad_sequence(char_inputs, batch_first=True, padding_value=0)
     return inputs, targets, char_inputs
+
 
 def get_dataloaders(word_vocab, char_vocab, tokenizer, batch_size):
     train_iter = WikiText2(split="train")
