@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class LSTMWithCacheAndChar(nn.Module):
@@ -41,8 +42,7 @@ class LSTMWithCacheAndChar(nn.Module):
         char_embeds = self.char_embedding(char_inputs)
         char_embeds = self.dropout(char_embeds)
         _, (char_hidden, _) = self.char_lstm(char_embeds)
-        char_hidden = char_hidden[-2:].permute(1, 0, 2).contiguous().view(batch_size, seq_len,
-                                                                          -1)  # Concatenate bidirectional
+        char_hidden = char_hidden[-2:].permute(1, 0, 2).contiguous().view(batch_size, seq_len, -1)
 
         # Word embedding and combination
         word_embeds = self.word_embedding(word_inputs)
@@ -57,16 +57,10 @@ class LSTMWithCacheAndChar(nn.Module):
         # Fully connected layer for prediction
         logits = self.fc(lstm_out)
 
-        # Cache logic
-        for idx in range(batch_size):
-            seq_key = word_inputs[idx].cpu().numpy().tobytes()  # Unique key for the sequence
-            if seq_key not in self.cache:
-                self.cache[seq_key] = logits[idx].detach()  # Store the logits in cache
-                if len(self.cache) > self.cache_size:
-                    self.cache.pop(next(iter(self.cache)))  # Evict the oldest entry in the cache
+        # Normalize logits for numerical stability
+        logits = F.log_softmax(logits, dim=-1)
 
         return logits
-
     def l2_regularization(self):
         l2_loss = 0.0
         for param in self.parameters():

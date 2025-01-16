@@ -17,7 +17,7 @@ def train_model(model, dataloader, optimizer, device, epochs, csv_file):
         correct = 0
         total = 0
 
-        for inputs, targets, char_inputs in dataloader:  # Unpack char_inputs
+        for inputs, targets, char_inputs in dataloader:
             inputs, targets, char_inputs = (
                 inputs.to(device),
                 targets.to(device),
@@ -30,9 +30,25 @@ def train_model(model, dataloader, optimizer, device, epochs, csv_file):
             outputs = outputs.view(-1, outputs.size(-1))
             targets = targets.view(-1)
 
+            # Debugging: Check inputs, targets, and outputs
+            if torch.isnan(outputs).any():
+                print("Found NaN in outputs!")
+                return
+            if targets.max() >= outputs.size(-1):
+                print("Target index out of range!")
+                print(f"Max target index: {targets.max()}, Output size: {outputs.size(-1)}")
+                return
+
             # Compute loss
             loss = criterion(outputs, targets)
+            if torch.isnan(loss).any():
+                print("Loss is NaN!")
+                return
+
             loss.backward()
+
+            # Gradient clipping
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
             optimizer.step()
 
             # Compute predictions
