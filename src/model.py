@@ -18,7 +18,9 @@ class LSTMWithCacheAndChar(nn.Module):
 
         # Bidirectional LSTMs
         self.char_lstm = nn.LSTM(char_embed_dim, char_hidden_dim, batch_first=True, bidirectional=True)
-        self.lstm = nn.LSTM(word_embed_dim + 2 * char_hidden_dim, hidden_dim, num_layers, batch_first=True,
+        self.lstm = nn.LSTM(word_embed_dim + 2 * char_hidden_dim,
+                            hidden_dim, num_layers,
+                            batch_first=True,
                             bidirectional=True)
 
         self.fc = nn.Linear(2 * hidden_dim, word_vocab_size)  # Adjusted for bidirection
