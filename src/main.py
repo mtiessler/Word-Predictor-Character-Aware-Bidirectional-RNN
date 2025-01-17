@@ -17,18 +17,28 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    print("Loading vocabularies and tokenizer...")
-    word_vocab, char_vocab, tokenizer = load_vocab_and_tokenizer()
-
-    print("Loading datasets...")
+    print("Loading dataset...")
     train_texts, val_texts = load_text_datasets()
+
+    print("Loading vocabularies and tokenizer...")
+    word_vocab, char_vocab, tokenizer = load_vocab_and_tokenizer(train_texts)
+
+
 
     print("Preparing datasets and dataloaders...")
     train_dataset = TextDataset(
-        train_texts, word_vocab, char_vocab, tokenizer, max_word_len=args.max_word_len, max_seq_len=args.max_seq_len
+        train_texts, word_vocab,
+        char_vocab,
+        tokenizer,
+        max_word_len=args.max_word_len,
+        max_seq_len=args.max_seq_len
     )
     val_dataset = TextDataset(
-        val_texts, word_vocab, char_vocab, tokenizer, max_word_len=args.max_word_len, max_seq_len=args.max_seq_len
+        val_texts, word_vocab,
+        char_vocab,
+        tokenizer,
+        max_word_len=args.max_word_len,
+        max_seq_len=args.max_seq_len
     )
 
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, collate_fn=collate_fn, shuffle=True)
