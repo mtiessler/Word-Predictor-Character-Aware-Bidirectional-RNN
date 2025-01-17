@@ -8,7 +8,7 @@ import re
 
 def clean_text(text):
     text = text.lower()
-    text = re.sub(r"[^a-zA-Z0-9\\s]", "", text)  # Keep alphanumeric and spaces
+    text = re.sub(r"[^a-zA-Z0-9\s]", "", text)
     return text.strip()
 
 
@@ -16,10 +16,8 @@ def tokenize_by_char(text):
     return list(text)
 
 
-def load_vocab_and_tokenizer():
+def load_vocab_and_tokenizer(train_texts):
     tokenizer = lambda x: x.split()  # Simple whitespace tokenizer
-    dataset = load_dataset("wikitext", "wikitext-2-raw-v1")
-    train_texts = dataset["train"]["text"]
 
     word_counter = Counter()
     char_counter = Counter()
