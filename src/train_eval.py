@@ -6,6 +6,9 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 
+# TODO plot time for experiments
+# TODO plot avg loss per epoch
+
 def train_model(model, dataloader, optimizer, device, epochs, csv_file):
     criterion = nn.CrossEntropyLoss(ignore_index=0)
     model.train()

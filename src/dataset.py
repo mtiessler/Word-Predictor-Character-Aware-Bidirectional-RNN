@@ -39,7 +39,7 @@ def load_vocab_and_tokenizer(train_texts):
 
 
 def load_text_datasets():
-    print("Loading Hugging Face's WikiText-2 dataset...")
+    print("Loading WikiText-2 dataset...")
     dataset = load_dataset("wikitext", "wikitext-2-raw-v1")
     train_texts = [text for text in dataset["train"]["text"] if text.strip()]
     val_texts = [text for text in dataset["validation"]["text"] if text.strip()]

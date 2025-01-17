@@ -7,6 +7,7 @@ from model import LSTMWithCacheAndChar
 from train_eval import train_model, evaluate_model, plot_training_results
 
 if __name__ == "__main__":
+    # TODO expand args
     parser = ArgumentParser()
     parser.add_argument("--batch_size", type=int, default=32, help="Batch size")
     parser.add_argument("--epochs", type=int, default=100, help="Number of epochs")
@@ -22,8 +23,6 @@ if __name__ == "__main__":
 
     print("Loading vocabularies and tokenizer...")
     word_vocab, char_vocab, tokenizer = load_vocab_and_tokenizer(train_texts)
-
-
 
     print("Preparing datasets and dataloaders...")
     train_dataset = TextDataset(
@@ -41,6 +40,7 @@ if __name__ == "__main__":
         max_seq_len=args.max_seq_len
     )
 
+    # TODO check if this is neccessary
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, collate_fn=collate_fn, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, collate_fn=collate_fn)
 
@@ -48,6 +48,7 @@ if __name__ == "__main__":
     print(f"Using device: {device}")
 
     print("Initializing model...")
+    # TODO add args as inputs
     model = LSTMWithCacheAndChar(
         word_vocab_size=len(word_vocab),
         char_vocab_size=len(char_vocab),
