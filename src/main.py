@@ -88,7 +88,7 @@ def load_config_from_csv(config_file):
 
 def main():
     # Load configuration from CSV
-    config_file = "experiment1_config.csv"  # Specify the configuration file
+    config_file = "experiment1_baseline_config.csv"  # Specify the configuration file
     config = load_config_from_csv(config_file)
 
     # Check if smoke test is enabled
@@ -200,8 +200,7 @@ def main():
             eval_perplexity,
             eval_accuracy,
             eval_edit_distance,
-            eval_time,
-            eval_energy
+            eval_time
         ])
 
     print("Plotting training results...")
