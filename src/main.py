@@ -72,7 +72,6 @@ def smoke_test():
 
 
 def main():
-    """Main function to run the training and evaluation pipeline."""
     # Load environment variables
     load_dotenv()
 
