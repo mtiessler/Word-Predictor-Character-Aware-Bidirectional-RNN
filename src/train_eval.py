@@ -87,7 +87,8 @@ def train_model(model, dataloader, optimizer, device, epochs, csv_file_path, pat
                   f"No significant improvement in accuracy for {patience} consecutive epochs.")
             break
 
-def evaluate_model(model, dataloader, device, vocab, output_file="predictions.csv"):
+
+def evaluate_model(model, dataloader, device, vocab, output_file):
     criterion = nn.CrossEntropyLoss(ignore_index=0)
     model.eval()
     total_loss = 0
@@ -96,18 +97,25 @@ def evaluate_model(model, dataloader, device, vocab, output_file="predictions.cs
     total_edit_distance = 0
     num_predictions = 0
 
-    # rapl_package = RaplPackageDomain(0) (Commented out)
+    # Reverse the vocab dictionary to get index-to-word mapping
+    idx_to_word = {idx: word for word, idx in vocab.items()}
 
     print("Starting Evaluation...")
     eval_start_time = time.time()
 
-    # Prepare the CSV for saving predictions
+    # Open CSV file for logging
     with open(output_file, "w", newline="") as csvfile:
         writer = csv.writer(csvfile)
         writer.writerow(["Sentence", "Target Word", "Predicted Word"])
 
-        with torch.no_grad():  # Removed measure_energy context
-            for inputs, targets, char_inputs, sentences in dataloader:
+        with torch.no_grad():
+            for batch in dataloader:
+                if len(batch) == 4:  # Includes sentences
+                    inputs, targets, char_inputs, sentences = batch
+                else:  # No sentences
+                    inputs, targets, char_inputs = batch
+                    sentences = None  # Placeholder
+
                 inputs, targets, char_inputs = (
                     inputs.to(device),
                     targets.to(device),
@@ -126,22 +134,17 @@ def evaluate_model(model, dataloader, device, vocab, output_file="predictions.cs
                 # Compute predictions
                 predictions = torch.argmax(outputs, dim=1)
 
-                # Save predictions and targets
-                for i, (sentence, target, prediction) in enumerate(
-                    zip(sentences, targets.cpu().numpy(), predictions.cpu().numpy())
-                ):
-                    if target != 0:  # Ignore padding tokens
-                        writer.writerow(
-                            [
-                                sentence,
-                                vocab.itos[target],  # Convert target index to word
-                                vocab.itos[prediction],  # Convert prediction index to word
-                            ]
-                        )
+                # Write predictions to CSV
+                for i in range(len(targets)):
+                    target_word = idx_to_word.get(targets[i].item(), "<unk>")
+                    predicted_word = idx_to_word.get(predictions[i].item(), "<unk>")
+                    sentence = sentences[i] if sentences else f"Sample {i + 1}"
+                    writer.writerow([sentence, target_word, predicted_word])
 
-                    # Calculate Levenshtein Distance
-                    total_edit_distance += edit_distance(str(prediction), str(target))
-                    num_predictions += 1
+                    # Ignore padding tokens for Levenshtein distance
+                    if target_word != "<pad>":
+                        total_edit_distance += edit_distance(predicted_word, target_word)
+                        num_predictions += 1
 
                 # Accuracy calculation
                 batch_correct = (predictions == targets).sum().item()
@@ -165,7 +168,8 @@ def evaluate_model(model, dataloader, device, vocab, output_file="predictions.cs
 
     return avg_loss, perplexity, accuracy, avg_edit_distance, eval_time
 
-def plot_training_results(csv_file):
+
+def plot_training_results(csv_file, experiment_name):
     os.makedirs("plots", exist_ok=True)
 
     # Read the results CSV
@@ -210,26 +214,19 @@ def plot_training_results(csv_file):
     plt.grid(True)
     plt.legend()
 
-    # Execution Time
-    plt.subplot(2, 3, 5)
-    plt.plot(data['Epoch'], data['Execution Time (s)'], marker='o', label='Execution Time', color='purple')
-    plt.title('Execution Time Per Epoch')
-    plt.xlabel('Epoch')
-    plt.ylabel('Time (s)')
-    plt.grid(True)
-    plt.legend()
-
-    # Energy Consumption
-    plt.subplot(2, 3, 6)
-    plt.plot(data['Epoch'], data['Energy Consumption (J)'], marker='o', label='Energy Consumption', color='brown')
-    plt.title('Energy Consumption Per Epoch')
-    plt.xlabel('Epoch')
-    plt.ylabel('Energy (J)')
-    plt.grid(True)
-    plt.legend()
+    if 'Execution Time (s)' in data.columns:
+        plt.subplot(2, 3, 5)
+        plt.plot(data['Epoch'], data['Execution Time (s)'], marker='o', label='Execution Time', color='purple')
+        plt.title('Execution Time Per Epoch')
+        plt.xlabel('Epoch')
+        plt.ylabel('Time (s)')
+        plt.grid(True)
+        plt.legend()
+    else:
+        print("Warning: 'Execution Time (s)' column is missing in the CSV file.")
 
     # Save the plot
-    plot_file = os.path.join("plots", "training_results.png")
+    plot_file = os.path.join("plots", f"{experiment_name}_training_results.png")
     plt.tight_layout()
     plt.savefig(plot_file)
     print(f"Training plot saved to {plot_file}.")

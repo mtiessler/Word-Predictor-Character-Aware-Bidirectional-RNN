@@ -189,7 +189,7 @@ def main():
      eval_perplexity,
      eval_accuracy,
      eval_edit_distance,
-     eval_time) = evaluate_model(model, val_loader, device, word_vocab)
+     eval_time) = evaluate_model(model, val_loader, device, word_vocab, config_file.split('.csv')[0]+'_predictions.csv')
 
     # Log evaluation results to CSV
     with open(csv_file_path, "a", newline="") as csv_file:
@@ -204,7 +204,7 @@ def main():
         ])
 
     print("Plotting training results...")
-    plot_training_results(csv_file_path)
+    plot_training_results(csv_file_path, config_file.split('.csv')[0])
 
 
 if __name__ == "__main__":
