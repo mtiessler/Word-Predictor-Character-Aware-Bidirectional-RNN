@@ -1,7 +1,6 @@
 import os
 import csv
 import torch
-from dotenv import load_dotenv
 from torch.utils.data import DataLoader
 from dataset import load_vocab_and_tokenizer, load_text_datasets, TextDataset, collate_fn
 from model import LSTMWithCacheAndChar
@@ -70,38 +69,56 @@ def smoke_test():
 
     print("Smoke test passed!")
 
+def load_config_from_csv(config_file):
+    config = {}
+    with open(config_file, "r") as file:
+        reader = csv.DictReader(file)
+        for row in reader:
+            key = row["key"]
+            value = row["value"]
+            # Convert numerical values to appropriate types
+            if value.isdigit():
+                config[key] = int(value)
+            else:
+                try:
+                    config[key] = float(value)
+                except ValueError:
+                    config[key] = value  # Keep as string if not a number
+    return config
 
 def main():
-    # Load environment variables
-    load_dotenv()
+    # Load configuration from CSV
+    config_file = "experiment1_config.csv"  # Specify the configuration file
+    config = load_config_from_csv(config_file)
 
     # Check if smoke test is enabled
-    smoke_test_enabled = os.getenv("SMOKE_TEST", "False").lower() == "true"
+    smoke_test_enabled = config.get("SMOKE_TEST", "False").lower() == "true"
     if smoke_test_enabled:
         smoke_test()
         return
 
-    # Read configuration from .env file
-    batch_size = int(os.getenv("BATCH_SIZE", 32))
-    epochs = int(os.getenv("EPOCHS", 100))
-    learning_rate = float(os.getenv("LEARNING_RATE", 0.001))
-    csv_file = os.getenv("CSV_FILE", "training_results.csv")
-    max_word_len = int(os.getenv("MAX_WORD_LEN", 10))
-    max_seq_len = int(os.getenv("MAX_SEQ_LEN", 50))
-    word_embed_dim = int(os.getenv("WORD_EMBED_DIM", 128))
-    char_embed_dim = int(os.getenv("CHAR_EMBED_DIM", 64))
-    hidden_dim = int(os.getenv("HIDDEN_DIM", 256))
-    char_hidden_dim = int(os.getenv("CHAR_HIDDEN_DIM", 128))
-    num_layers = int(os.getenv("NUM_LAYERS", 2))
-    cache_size = int(os.getenv("CACHE_SIZE", 100))
-    dropout_rate = float(os.getenv("DROPOUT_RATE", 0.5))
-    l2_lambda = float(os.getenv("L2_LAMBDA", 1e-5))
+    # Extract configuration values
+    batch_size = config["BATCH_SIZE"]
+    epochs = config["EPOCHS"]
+    learning_rate = config["LEARNING_RATE"]
+    csv_file = config["CSV_FILE"]
+    max_word_len = config["MAX_WORD_LEN"]
+    max_seq_len = config["MAX_SEQ_LEN"]
+    word_embed_dim = config["WORD_EMBED_DIM"]
+    char_embed_dim = config["CHAR_EMBED_DIM"]
+    hidden_dim = config["HIDDEN_DIM"]
+    char_hidden_dim = config["CHAR_HIDDEN_DIM"]
+    num_layers = config["NUM_LAYERS"]
+    cache_size = config["CACHE_SIZE"]
+    dropout_rate = config["DROPOUT_RATE"]
+    l2_lambda = config["L2_LAMBDA"]
+    architecture = config["ARCHITECTURE"]
 
     # Experiment name and paths
     experiment_name = f"experiment_batch{batch_size}_epoch{epochs}_lr{learning_rate}"
     os.makedirs("results", exist_ok=True)
     os.makedirs("plots", exist_ok=True)
-    csv_file_path = os.path.join("results", f"{experiment_name}.csv")
+    csv_file_path = os.path.join("results", csv_file)
 
     # Initialize CSV file
     csv_headers = [
@@ -165,9 +182,9 @@ def main():
     train_model(model, train_loader, optimizer, device, epochs, csv_file_path)
 
     print("Evaluating model...")
-    eval_loss, eval_perplexity, eval_accuracy, eval_edit_distance, eval_time, eval_energy = evaluate_model(model,
-                                                                                                           val_loader,
-                                                                                                           device)
+    eval_loss, eval_perplexity, eval_accuracy, eval_edit_distance, eval_time, eval_energy = evaluate_model(
+        model, val_loader, device
+    )
 
     # Log evaluation results to CSV
     with open(csv_file_path, "a", newline="") as csv_file:
