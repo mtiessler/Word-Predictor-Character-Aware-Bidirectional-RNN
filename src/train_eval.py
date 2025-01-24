@@ -1,19 +1,22 @@
 import os
 import csv
+import time
 import torch
 import torch.nn as nn
-import matplotlib.pyplot as plt
 import pandas as pd
+import matplotlib.pyplot as plt
 from pyJoules.device.rapl_device import RaplPackageDomain
-from pyJoules.energy_meter import measure_energy
-import time
+from pyJoules.energy_meter import measure_energy, EnergyMeter
 from nltk.metrics import edit_distance
 
 
 def train_model(model, dataloader, optimizer, device, epochs, csv_file_path):
     criterion = nn.CrossEntropyLoss(ignore_index=0)
     model.train()
-    rapl_package = RaplPackageDomain(0)
+
+    # # Initialize Energy Meter (Commented out)
+    # rapl_package = RaplPackageDomain(0)
+    # energy_meter = EnergyMeter([rapl_package])
 
     for epoch in range(epochs):
         print(f"Starting Epoch {epoch + 1}/{epochs}...")
@@ -24,40 +27,45 @@ def train_model(model, dataloader, optimizer, device, epochs, csv_file_path):
         total_edit_distance = 0
         num_predictions = 0
 
-        with measure_energy(rapl_package) as energy_measurement:
-            for inputs, targets, char_inputs in dataloader:
-                inputs, targets, char_inputs = (
-                    inputs.to(device),
-                    targets.to(device),
-                    char_inputs.to(device),
-                )
-                optimizer.zero_grad()
+        # Start energy measurement (Commented out)
+        # energy_meter.start()
 
-                # Forward pass
-                outputs = model(inputs, char_inputs)
-                outputs = outputs.view(-1, outputs.size(-1))
-                targets = targets.view(-1)
+        for inputs, targets, char_inputs in dataloader:
+            inputs, targets, char_inputs = (
+                inputs.to(device),
+                targets.to(device),
+                char_inputs.to(device),
+            )
+            optimizer.zero_grad()
 
-                # Compute loss
-                loss = criterion(outputs, targets)
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
-                optimizer.step()
+            # Forward pass
+            outputs = model(inputs, char_inputs)
+            outputs = outputs.view(-1, outputs.size(-1))
+            targets = targets.view(-1)
 
-                # Compute predictions
-                predictions = torch.argmax(outputs, dim=1)
-                batch_correct = (predictions == targets).sum().item()
-                batch_total = targets.size(0)
+            # Compute loss
+            loss = criterion(outputs, targets)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
+            optimizer.step()
 
-                # Calculate Levenshtein Distance
-                for pred, true in zip(predictions.cpu().numpy(), targets.cpu().numpy()):
-                    if true != 0:  # Ignore padding tokens
-                        total_edit_distance += edit_distance(str(pred), str(true))
-                        num_predictions += 1
+            # Compute predictions
+            predictions = torch.argmax(outputs, dim=1)
+            batch_correct = (predictions == targets).sum().item()
+            batch_total = targets.size(0)
 
-                correct += batch_correct
-                total += batch_total
-                total_loss += loss.item()
+            # Calculate Levenshtein Distance
+            for pred, true in zip(predictions.cpu().numpy(), targets.cpu().numpy()):
+                if true != 0:  # Ignore padding tokens
+                    total_edit_distance += edit_distance(str(pred), str(true))
+                    num_predictions += 1
+
+            correct += batch_correct
+            total += batch_total
+            total_loss += loss.item()
+
+        # Stop energy measurement (Commented out)
+        # energy_measurement = energy_meter.stop()
 
         # Epoch metrics
         avg_loss = total_loss / len(dataloader)
@@ -65,8 +73,9 @@ def train_model(model, dataloader, optimizer, device, epochs, csv_file_path):
         accuracy = 100.0 * correct / total
         avg_edit_distance = total_edit_distance / num_predictions if num_predictions > 0 else 0
         epoch_time = time.time() - epoch_start_time
-        energy_consumed = energy_measurement[0].energy
+        # energy_consumed = 0  # Placeholder for energy (Commented out)
 
+        # Log epoch metrics
         with open(csv_file_path, "a", newline="") as csv_file:
             writer = csv.writer(csv_file)
             writer.writerow([
@@ -76,7 +85,7 @@ def train_model(model, dataloader, optimizer, device, epochs, csv_file_path):
                 accuracy,
                 avg_edit_distance,
                 epoch_time,
-                energy_consumed
+                # energy_consumed (Commented out)
             ])
 
         print(f"Epoch {epoch + 1}/{epochs} Summary: "
@@ -84,14 +93,10 @@ def train_model(model, dataloader, optimizer, device, epochs, csv_file_path):
               f"Perplexity: {perplexity:.4f}, "
               f"Accuracy: {accuracy:.2f}%, "
               f"Avg Levenshtein: {avg_edit_distance:.4f}, "
-              f"Execution Time: {epoch_time:.2f}s, "
-              f"Energy Consumption: {energy_consumed:.2f}J")
+              f"Execution Time: {epoch_time:.2f}s")
 
-from pyJoules.energy_meter import measure_energy
-from pyJoules.device.rapl_device import RaplPackageDomain
-import time
 
-def evaluate_model(model, dataloader, device):
+def evaluate_model(model, dataloader, device, vocab, output_file="predictions.csv"):
     criterion = nn.CrossEntropyLoss(ignore_index=0)
     model.eval()
     total_loss = 0
@@ -100,68 +105,82 @@ def evaluate_model(model, dataloader, device):
     total_edit_distance = 0
     num_predictions = 0
 
-    rapl_package = RaplPackageDomain(0)  # Energy measurement setup
+    # rapl_package = RaplPackageDomain(0) (Commented out)
 
     print("Starting Evaluation...")
     eval_start_time = time.time()
-    with torch.no_grad(), measure_energy(rapl_package) as energy_measurement:
-        for inputs, targets, char_inputs in dataloader:
-            inputs, targets, char_inputs = (
-                inputs.to(device),
-                targets.to(device),
-                char_inputs.to(device),
-            )
 
-            # Forward pass
-            outputs = model(inputs, char_inputs)
-            outputs = outputs.view(-1, outputs.size(-1))
-            targets = targets.view(-1)
+    # Prepare the CSV for saving predictions
+    with open(output_file, "w", newline="") as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(["Sentence", "Target Word", "Predicted Word"])
 
-            # Compute loss (Cross-Entropy)
-            loss = criterion(outputs, targets)
-            total_loss += loss.item()
+        with torch.no_grad():  # Removed measure_energy context
+            for inputs, targets, char_inputs, sentences in dataloader:
+                inputs, targets, char_inputs = (
+                    inputs.to(device),
+                    targets.to(device),
+                    char_inputs.to(device),
+                )
 
-            # Compute predictions
-            predictions = torch.argmax(outputs, dim=1)
+                # Forward pass
+                outputs = model(inputs, char_inputs)
+                outputs = outputs.view(-1, outputs.size(-1))
+                targets = targets.view(-1)
 
-            # Calculate Levenshtein Distance
-            for pred, true in zip(predictions.cpu().numpy(), targets.cpu().numpy()):
-                if true != 0:  # Ignore padding tokens
-                    total_edit_distance += edit_distance(str(pred), str(true))
+                # Compute loss
+                loss = criterion(outputs, targets)
+                total_loss += loss.item()
+
+                # Compute predictions
+                predictions = torch.argmax(outputs, dim=1)
+
+                # Save predictions and targets
+                for i, (sentence, target, prediction) in enumerate(
+                    zip(sentences, targets.cpu().numpy(), predictions.cpu().numpy())
+                ):
+                    if target != 0:  # Ignore padding tokens
+                        writer.writerow(
+                            [
+                                sentence,
+                                vocab.itos[target],  # Convert target index to word
+                                vocab.itos[prediction],  # Convert prediction index to word
+                            ]
+                        )
+
+                    # Calculate Levenshtein Distance
+                    total_edit_distance += edit_distance(str(prediction), str(target))
                     num_predictions += 1
 
-            # Accuracy calculation
-            batch_correct = (predictions == targets).sum().item()
-            batch_total = targets.size(0)
-            correct += batch_correct
-            total += batch_total
+                # Accuracy calculation
+                batch_correct = (predictions == targets).sum().item()
+                batch_total = targets.size(0)
+                correct += batch_correct
+                total += batch_total
 
     # Metrics calculation
-    avg_loss = total_loss / len(dataloader)  # Average cross-entropy loss
+    avg_loss = total_loss / len(dataloader)
     perplexity = torch.exp(torch.tensor(avg_loss)).item()
     accuracy = 100.0 * correct / total
     avg_edit_distance = total_edit_distance / num_predictions if num_predictions > 0 else 0
     eval_time = time.time() - eval_start_time
-    energy_consumed = energy_measurement[0].energy
 
-    print(f"Evaluation Complete:")
-    print(f"  - Avg Loss (Cross-Entropy): {avg_loss:.4f}")
-    print(f"  - Perplexity: {perplexity:.4f}")
-    print(f"  - Accuracy: {accuracy:.2f}%")
-    print(f"  - Avg Levenshtein Distance: {avg_edit_distance:.4f}")
-    print(f"  - Execution Time: {eval_time:.2f}s")
-    print(f"  - Energy Consumption: {energy_consumed:.2f}J")
+    print(f"Evaluation Complete: "
+          f"Avg Loss: {avg_loss:.4f}, "
+          f"Perplexity: {perplexity:.4f}, "
+          f"Accuracy: {accuracy:.2f}%, "
+          f"Avg Levenshtein Distance: {avg_edit_distance:.4f}, "
+          f"Time: {eval_time:.2f}s")
 
-    return avg_loss, perplexity, accuracy, avg_edit_distance, eval_time, energy_consumed
+    return avg_loss, perplexity, accuracy, avg_edit_distance, eval_time
 
 def plot_training_results(csv_file):
-    # Create plots directory if it doesn't exist
     os.makedirs("plots", exist_ok=True)
 
     # Read the results CSV
     data = pd.read_csv(csv_file)
 
-    # Create a figure for multiple plots
+    # Create a figure for plots
     plt.figure(figsize=(20, 10))
 
     # Accuracy
@@ -182,7 +201,7 @@ def plot_training_results(csv_file):
     plt.grid(True)
     plt.legend()
 
-    # Average Levenshtein Distance
+    # Levenshtein Distance
     plt.subplot(2, 3, 3)
     plt.plot(data['Epoch'], data['Avg Levenshtein'], marker='o', label='Avg Levenshtein Distance', color='green')
     plt.title('Average Levenshtein Distance Over Epochs')
