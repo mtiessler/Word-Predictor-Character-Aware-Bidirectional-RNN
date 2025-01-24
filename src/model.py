@@ -3,6 +3,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+
 class LSTMWithCacheAndChar(nn.Module):
     def __init__(self, word_vocab_size,
                  char_vocab_size,
@@ -11,7 +16,9 @@ class LSTMWithCacheAndChar(nn.Module):
                  hidden_dim,
                  char_hidden_dim,
                  num_layers,
-                 cache_size):
+                 cache_size,
+                 dropout_rate=0.5,  # Added dropout rate as a parameter
+                 l2_lambda=1e-5):  # Added L2 lambda as a parameter
         super(LSTMWithCacheAndChar, self).__init__()
         self.word_embedding = nn.Embedding(word_vocab_size, word_embed_dim)
         self.char_embedding = nn.Embedding(char_vocab_size, char_embed_dim)
@@ -29,15 +36,15 @@ class LSTMWithCacheAndChar(nn.Module):
         self.fc = nn.Linear(2 * hidden_dim, word_vocab_size)  # Adjusted for bidirection
 
         # Dropout and Layer Normalization
-        self.dropout = nn.Dropout(0.5)  # TODO add as argument: Dropout rate can be adjusted
+        self.dropout = nn.Dropout(dropout_rate)  # Dropout rate now adjustable
         self.layer_norm = nn.LayerNorm(2 * hidden_dim)  # Adjusted for bidirection
 
         # Cache for storing recent sequences
         self.cache = {}
         self.cache_size = cache_size
 
-        # Regularization strength (adjust as needed)
-        self.l2_lambda = 1e-5 # TODO add as argument
+        # Regularization strength (adjustable)
+        self.l2_lambda = l2_lambda
 
     def forward(self, word_inputs, char_inputs):
         batch_size, seq_len, max_word_len = char_inputs.size()
@@ -63,12 +70,10 @@ class LSTMWithCacheAndChar(nn.Module):
         logits = self.fc(lstm_out)
 
         # Normalize logits for numerical stability
-        # TODO add as argument for different values (softmax, log softmax, attenage)
-        logits = F.log_softmax(logits, dim=-1)
+        logits = F.log_softmax(logits, dim=-1)  # Default normalization
 
         return logits
 
-    # TODO l1 regularization
     def l2_regularization(self):
         l2_loss = 0.0
         for param in self.parameters():
