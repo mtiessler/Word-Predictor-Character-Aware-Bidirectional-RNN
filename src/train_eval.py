@@ -10,13 +10,12 @@ from pyJoules.energy_meter import measure_energy, EnergyMeter
 from nltk.metrics import edit_distance
 
 
-def train_model(model, dataloader, optimizer, device, epochs, csv_file_path):
+def train_model(model, dataloader, optimizer, device, epochs, csv_file_path, patience, improvement_threshold):
     criterion = nn.CrossEntropyLoss(ignore_index=0)
     model.train()
 
-    # # Initialize Energy Meter (Commented out)
-    # rapl_package = RaplPackageDomain(0)
-    # energy_meter = EnergyMeter([rapl_package])
+    best_accuracy = 0
+    epochs_without_improvement = 0
 
     for epoch in range(epochs):
         print(f"Starting Epoch {epoch + 1}/{epochs}...")
@@ -24,11 +23,6 @@ def train_model(model, dataloader, optimizer, device, epochs, csv_file_path):
         total_loss = 0
         correct = 0
         total = 0
-        total_edit_distance = 0
-        num_predictions = 0
-
-        # Start energy measurement (Commented out)
-        # energy_meter.start()
 
         for inputs, targets, char_inputs in dataloader:
             inputs, targets, char_inputs = (
@@ -54,26 +48,15 @@ def train_model(model, dataloader, optimizer, device, epochs, csv_file_path):
             batch_correct = (predictions == targets).sum().item()
             batch_total = targets.size(0)
 
-            # Calculate Levenshtein Distance
-            for pred, true in zip(predictions.cpu().numpy(), targets.cpu().numpy()):
-                if true != 0:  # Ignore padding tokens
-                    total_edit_distance += edit_distance(str(pred), str(true))
-                    num_predictions += 1
-
             correct += batch_correct
             total += batch_total
             total_loss += loss.item()
-
-        # Stop energy measurement (Commented out)
-        # energy_measurement = energy_meter.stop()
 
         # Epoch metrics
         avg_loss = total_loss / len(dataloader)
         perplexity = torch.exp(torch.tensor(avg_loss)).item()
         accuracy = 100.0 * correct / total
-        avg_edit_distance = total_edit_distance / num_predictions if num_predictions > 0 else 0
         epoch_time = time.time() - epoch_start_time
-        # energy_consumed = 0  # Placeholder for energy (Commented out)
 
         # Log epoch metrics
         with open(csv_file_path, "a", newline="") as csv_file:
@@ -83,18 +66,26 @@ def train_model(model, dataloader, optimizer, device, epochs, csv_file_path):
                 avg_loss,
                 perplexity,
                 accuracy,
-                avg_edit_distance,
                 epoch_time,
-                # energy_consumed (Commented out)
             ])
 
         print(f"Epoch {epoch + 1}/{epochs} Summary: "
               f"Avg Loss (Cross-Entropy): {avg_loss:.4f}, "
               f"Perplexity: {perplexity:.4f}, "
               f"Accuracy: {accuracy:.2f}%, "
-              f"Avg Levenshtein: {avg_edit_distance:.4f}, "
               f"Execution Time: {epoch_time:.2f}s")
 
+        # Early stopping logic
+        if accuracy - best_accuracy > improvement_threshold:
+            best_accuracy = accuracy
+            epochs_without_improvement = 0  # Reset counter
+        else:
+            epochs_without_improvement += 1
+
+        if epochs_without_improvement >= patience:
+            print(f"Early stopping triggered after {epoch + 1} epochs. "
+                  f"No significant improvement in accuracy for {patience} consecutive epochs.")
+            break
 
 def evaluate_model(model, dataloader, device, vocab, output_file="predictions.csv"):
     criterion = nn.CrossEntropyLoss(ignore_index=0)

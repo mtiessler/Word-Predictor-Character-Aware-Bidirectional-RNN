@@ -112,6 +112,9 @@ def main():
     cache_size = config["CACHE_SIZE"]
     dropout_rate = config["DROPOUT_RATE"]
     l2_lambda = config["L2_LAMBDA"]
+    patience = config["PATIENCE"]
+    improvement_threshold = config["IMPROVEMENT_THRESHOLD"]
+
     architecture = config["ARCHITECTURE"]
 
     # Experiment name and paths
@@ -179,12 +182,14 @@ def main():
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
     print("Starting training...")
-    train_model(model, train_loader, optimizer, device, epochs, csv_file_path)
+    train_model(model, train_loader, optimizer, device, epochs, csv_file_path, patience, improvement_threshold)
 
     print("Evaluating model...")
-    eval_loss, eval_perplexity, eval_accuracy, eval_edit_distance, eval_time, eval_energy = evaluate_model(
-        model, val_loader, device
-    )
+    (eval_loss,
+     eval_perplexity,
+     eval_accuracy,
+     eval_edit_distance,
+     eval_time) = evaluate_model(model, val_loader, device, word_vocab)
 
     # Log evaluation results to CSV
     with open(csv_file_path, "a", newline="") as csv_file:
