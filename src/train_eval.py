@@ -5,8 +5,6 @@ import torch
 import torch.nn as nn
 import pandas as pd
 import matplotlib.pyplot as plt
-from pyJoules.device.rapl_device import RaplPackageDomain
-from pyJoules.energy_meter import measure_energy, EnergyMeter
 from nltk.metrics import edit_distance
 
 
@@ -32,63 +30,44 @@ def train_model(model, dataloader, optimizer, device, epochs, csv_file_path, pat
             )
             optimizer.zero_grad()
 
-            # Forward pass
             outputs = model(inputs, char_inputs)
             outputs = outputs.view(-1, outputs.size(-1))
             targets = targets.view(-1)
 
-            # Compute loss
             loss = criterion(outputs, targets)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
             optimizer.step()
 
-            # Compute predictions
             predictions = torch.argmax(outputs, dim=1)
-            batch_correct = (predictions == targets).sum().item()
-            batch_total = targets.size(0)
-
-            correct += batch_correct
-            total += batch_total
+            correct += (predictions == targets).sum().item()
+            total += targets.size(0)
             total_loss += loss.item()
 
-        # Epoch metrics
         avg_loss = total_loss / len(dataloader)
         perplexity = torch.exp(torch.tensor(avg_loss)).item()
         accuracy = 100.0 * correct / total
         epoch_time = time.time() - epoch_start_time
 
-        # Log epoch metrics
         with open(csv_file_path, "a", newline="") as csv_file:
             writer = csv.writer(csv_file)
-            writer.writerow([
-                epoch + 1,
-                avg_loss,
-                perplexity,
-                accuracy,
-                epoch_time,
-            ])
+            writer.writerow([epoch + 1, avg_loss, perplexity, accuracy, epoch_time])
 
-        print(f"Epoch {epoch + 1}/{epochs} Summary: "
-              f"Avg Loss (Cross-Entropy): {avg_loss:.4f}, "
-              f"Perplexity: {perplexity:.4f}, "
-              f"Accuracy: {accuracy:.2f}%, "
-              f"Execution Time: {epoch_time:.2f}s")
+        print(f"Epoch {epoch + 1} Summary: Loss={avg_loss:.4f}, Perplexity={perplexity:.4f}, Accuracy={accuracy:.2f}%, Time={epoch_time:.2f}s")
 
-        # Early stopping logic
         if accuracy - best_accuracy > improvement_threshold:
             best_accuracy = accuracy
-            epochs_without_improvement = 0  # Reset counter
+            epochs_without_improvement = 0
         else:
             epochs_without_improvement += 1
 
         if epochs_without_improvement >= patience:
-            print(f"Early stopping triggered after {epoch + 1} epochs. "
-                  f"No significant improvement in accuracy for {patience} consecutive epochs.")
+            print(f"Early stopping triggered after {epoch + 1} epochs.")
             break
 
 
-def evaluate_model(model, dataloader, device, vocab, output_file):
+def evaluate_model(model, dataloader, device, vocab, output_file, num_samples_to_save=50):
+
     criterion = nn.CrossEntropyLoss(ignore_index=0)
     model.eval()
     total_loss = 0
@@ -97,7 +76,7 @@ def evaluate_model(model, dataloader, device, vocab, output_file):
     total_edit_distance = 0
     num_predictions = 0
 
-    # Reverse the vocab dictionary to get index-to-word mapping
+    # Reverse the vocab dictionary for index-to-word mapping
     idx_to_word = {idx: word for word, idx in vocab.items()}
 
     print("Starting Evaluation...")
@@ -106,15 +85,17 @@ def evaluate_model(model, dataloader, device, vocab, output_file):
     # Open CSV file for logging
     with open(output_file, "w", newline="") as csvfile:
         writer = csv.writer(csvfile)
-        writer.writerow(["Sentence", "Target Word", "Predicted Word"])
+        writer.writerow(["Sample", "Input Sentence", "Target Word", "Predicted Word"])
+
+        saved_samples = 0  # Counter for saved samples
 
         with torch.no_grad():
             for batch in dataloader:
-                if len(batch) == 4:  # Includes sentences
+                if len(batch) == 4:  # Includes input sentences
                     inputs, targets, char_inputs, sentences = batch
-                else:  # No sentences
+                else:  # No sentences provided
                     inputs, targets, char_inputs = batch
-                    sentences = None  # Placeholder
+                    sentences = [f"Sample {i+1}" for i in range(len(targets))]
 
                 inputs, targets, char_inputs = (
                     inputs.to(device),
@@ -134,17 +115,24 @@ def evaluate_model(model, dataloader, device, vocab, output_file):
                 # Compute predictions
                 predictions = torch.argmax(outputs, dim=1)
 
-                # Write predictions to CSV
+                # Save only a subset of samples
                 for i in range(len(targets)):
-                    target_word = idx_to_word.get(targets[i].item(), "<unk>")
-                    predicted_word = idx_to_word.get(predictions[i].item(), "<unk>")
-                    sentence = sentences[i] if sentences else f"Sample {i + 1}"
-                    writer.writerow([sentence, target_word, predicted_word])
+                    if saved_samples < num_samples_to_save:
+                        input_sentence = sentences[i] if sentences else "N/A"
+                        target_word = idx_to_word.get(targets[i].item(), "<unk>")
+                        predicted_word = idx_to_word.get(predictions[i].item(), "<unk>")
+
+                        writer.writerow([saved_samples + 1, input_sentence, target_word, predicted_word])
+                        saved_samples += 1
 
                     # Ignore padding tokens for Levenshtein distance
                     if target_word != "<pad>":
                         total_edit_distance += edit_distance(predicted_word, target_word)
                         num_predictions += 1
+
+                # Stop saving once the desired number of samples is reached
+                if saved_samples >= num_samples_to_save:
+                    break
 
                 # Accuracy calculation
                 batch_correct = (predictions == targets).sum().item()
@@ -159,18 +147,18 @@ def evaluate_model(model, dataloader, device, vocab, output_file):
     avg_edit_distance = total_edit_distance / num_predictions if num_predictions > 0 else 0
     eval_time = time.time() - eval_start_time
 
-    print(f"Evaluation Complete: "
-          f"Avg Loss: {avg_loss:.4f}, "
-          f"Perplexity: {perplexity:.4f}, "
-          f"Accuracy: {accuracy:.2f}%, "
-          f"Avg Levenshtein Distance: {avg_edit_distance:.4f}, "
-          f"Time: {eval_time:.2f}s")
+    print(f"Evaluation Summary: "
+          f"Loss={avg_loss:.4f}, "
+          f"Perplexity={perplexity:.4f}, "
+          f"Accuracy={accuracy:.2f}%, "
+          f"Edit Distance={avg_edit_distance:.4f}, "
+          f"Time={eval_time:.2f}s")
 
     return avg_loss, perplexity, accuracy, avg_edit_distance, eval_time
 
 
 def plot_training_results(csv_file, experiment_name):
-    os.makedirs("plots", exist_ok=True)
+    os.makedirs(f"results/{experiment_name}/plots", exist_ok=True)
 
     # Read the results CSV
     data = pd.read_csv(csv_file)
@@ -201,7 +189,7 @@ def plot_training_results(csv_file, experiment_name):
     plt.plot(data['Epoch'], data['Avg Levenshtein'], marker='o', label='Avg Levenshtein Distance', color='green')
     plt.title('Average Levenshtein Distance Over Epochs')
     plt.xlabel('Epoch')
-    plt.ylabel('Avg Levenshtein Distance')
+    plt.ylabel('Loss')
     plt.grid(True)
     plt.legend()
 
@@ -210,23 +198,37 @@ def plot_training_results(csv_file, experiment_name):
     plt.plot(data['Epoch'], data['Loss (Cross-Entropy)'], marker='o', label='Cross-Entropy Loss', color='red')
     plt.title('Cross-Entropy Loss Over Epochs')
     plt.xlabel('Epoch')
-    plt.ylabel('Loss (Cross-Entropy)')
+    plt.ylabel('Time (s)')
     plt.grid(True)
     plt.legend()
 
-    if 'Execution Time (s)' in data.columns:
-        plt.subplot(2, 3, 5)
-        plt.plot(data['Epoch'], data['Execution Time (s)'], marker='o', label='Execution Time', color='purple')
-        plt.title('Execution Time Per Epoch')
+    plt.tight_layout()
+    plot_path = f"results/{experiment_name}/plots/{experiment_name}_training_results.png"
+    plt.savefig(plot_path)
+    print(f"Saved training plot to {plot_path}.")
+
+
+def plot_aggregated_results(experiment_results, output_folder):
+    os.makedirs(output_folder, exist_ok=True)
+
+    all_data = []
+    for experiment, csv_file in experiment_results.items():
+        data = pd.read_csv(csv_file)
+        data['Experiment'] = experiment
+        all_data.append(data)
+    all_data = pd.concat(all_data)
+
+    metrics = ['Accuracy', 'Perplexity', 'Loss (Cross-Entropy)', 'Execution Time (s)']
+    for metric in metrics:
+        plt.figure(figsize=(10, 6))
+        for experiment in all_data['Experiment'].unique():
+            exp_data = all_data[all_data['Experiment'] == experiment]
+            plt.plot(exp_data['Epoch'], exp_data[metric], marker='o', label=experiment)
+        plt.title(f'{metric} Across Experiments')
         plt.xlabel('Epoch')
-        plt.ylabel('Time (s)')
+        plt.ylabel(metric)
         plt.grid(True)
         plt.legend()
-    else:
-        print("Warning: 'Execution Time (s)' column is missing in the CSV file.")
-
-    # Save the plot
-    plot_file = os.path.join("plots", f"{experiment_name}_training_results.png")
-    plt.tight_layout()
-    plt.savefig(plot_file)
-    print(f"Training plot saved to {plot_file}.")
+        plot_path = os.path.join(output_folder, f"aggregated_{metric.lower().replace(' ', '_')}.png")
+        plt.savefig(plot_path)
+        print(f"Saved aggregated plot to {plot_path}.")
