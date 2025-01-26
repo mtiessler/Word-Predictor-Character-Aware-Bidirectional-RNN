@@ -21,6 +21,8 @@ def train_model(model, dataloader, optimizer, device, epochs, csv_file_path, pat
         total_loss = 0
         correct = 0
         total = 0
+        total_edit_distance = 0
+        num_predictions = 0
 
         for inputs, targets, char_inputs in dataloader:
             inputs, targets, char_inputs = (
@@ -44,16 +46,28 @@ def train_model(model, dataloader, optimizer, device, epochs, csv_file_path, pat
             total += targets.size(0)
             total_loss += loss.item()
 
+            # Compute Levenshtein Distance
+            idx_to_word = {idx: word for word, idx in dataloader.dataset.word_vocab.items()}
+            for pred, tgt in zip(predictions, targets):
+                pred_word = idx_to_word.get(pred.item(), "<unk>")
+                tgt_word = idx_to_word.get(tgt.item(), "<unk>")
+                if tgt_word != "<pad>":
+                    total_edit_distance += edit_distance(pred_word, tgt_word)
+                    num_predictions += 1
+
         avg_loss = total_loss / len(dataloader)
         perplexity = torch.exp(torch.tensor(avg_loss)).item()
         accuracy = 100.0 * correct / total
+        avg_edit_distance = total_edit_distance / num_predictions if num_predictions > 0 else 0
         epoch_time = time.time() - epoch_start_time
 
         with open(csv_file_path, "a", newline="") as csv_file:
             writer = csv.writer(csv_file)
-            writer.writerow([epoch + 1, avg_loss, perplexity, accuracy, epoch_time])
+            writer.writerow([epoch + 1, avg_loss, perplexity, accuracy, avg_edit_distance, epoch_time])
 
-        print(f"Epoch {epoch + 1} Summary: Loss={avg_loss:.4f}, Perplexity={perplexity:.4f}, Accuracy={accuracy:.2f}%, Time={epoch_time:.2f}s")
+        print(f"Epoch {epoch + 1} Summary: "
+              f"Loss={avg_loss:.4f}, Perplexity={perplexity:.4f}, Accuracy={accuracy:.2f}%, "
+              f"Levenshtein Distance={avg_edit_distance:.4f}, Time={epoch_time:.2f}s")
 
         if accuracy - best_accuracy > improvement_threshold:
             best_accuracy = accuracy
@@ -85,15 +99,15 @@ def evaluate_model(model, dataloader, device, vocab, output_file, num_samples_to
     # Open CSV file for logging
     with open(output_file, "w", newline="") as csvfile:
         writer = csv.writer(csvfile)
-        writer.writerow(["Sample", "Input Sentence", "Target Word", "Predicted Word"])
+        writer.writerow(["Sample", "Input Sentence", "Target Word", "Predicted Word", "Levenshtein Distance"])
 
-        saved_samples = 0  # Counter for saved samples
+        saved_samples = 0
 
         with torch.no_grad():
             for batch in dataloader:
-                if len(batch) == 4:  # Includes input sentences
+                if len(batch) == 4:
                     inputs, targets, char_inputs, sentences = batch
-                else:  # No sentences provided
+                else:
                     inputs, targets, char_inputs = batch
                     sentences = [f"Sample {i+1}" for i in range(len(targets))]
 
@@ -115,35 +129,27 @@ def evaluate_model(model, dataloader, device, vocab, output_file, num_samples_to
                 # Compute predictions
                 predictions = torch.argmax(outputs, dim=1)
 
-                # Save only a subset of samples
-                for i in range(len(targets)):
-                    if saved_samples < num_samples_to_save:
-                        input_sentence = sentences[i] if sentences else "N/A"
-                        target_word = idx_to_word.get(targets[i].item(), "<unk>")
-                        predicted_word = idx_to_word.get(predictions[i].item(), "<unk>")
+                valid_mask = targets != criterion.ignore_index
+                valid_targets = targets[valid_mask]
+                valid_predictions = predictions[valid_mask]
 
-                        writer.writerow([saved_samples + 1, input_sentence, target_word, predicted_word])
-                        saved_samples += 1
+                valid_sentences = [sentences[i] for i in range(len(sentences)) if valid_mask[i]] if sentences else []
+                for i in range(min(len(valid_targets), num_samples_to_save - saved_samples)):
+                    input_sentence = valid_sentences[i] if i < len(valid_sentences) else "N/A"
+                    target_word = idx_to_word.get(valid_targets[i].item(), "<unk>")
+                    predicted_word = idx_to_word.get(valid_predictions[i].item(), "<unk>")
+                    lev_dist = edit_distance(predicted_word, target_word) if target_word != "<pad>" else "N/A"
 
-                    # Ignore padding tokens for Levenshtein distance
+                    writer.writerow([saved_samples + 1, input_sentence, target_word, predicted_word, lev_dist])
+                    saved_samples += 1
+
                     if target_word != "<pad>":
-                        total_edit_distance += edit_distance(predicted_word, target_word)
+                        total_edit_distance += lev_dist
                         num_predictions += 1
 
-                # Stop saving once the desired number of samples is reached
-                if saved_samples >= num_samples_to_save:
-                    break
-
-                # Accuracy calculation
-                batch_correct = (predictions == targets).sum().item()
-                batch_total = targets.size(0)
-                correct += batch_correct
-                total += batch_total
-
-    # Metrics calculation
-    avg_loss = total_loss / len(dataloader)
-    perplexity = torch.exp(torch.tensor(avg_loss)).item()
-    accuracy = 100.0 * correct / total
+    avg_loss = total_loss / len(dataloader) if len(dataloader) > 0 else 0
+    perplexity = torch.exp(torch.tensor(avg_loss)).item() if avg_loss > 0 else float("inf")
+    accuracy = 100.0 * correct / total if total > 0 else 0
     avg_edit_distance = total_edit_distance / num_predictions if num_predictions > 0 else 0
     eval_time = time.time() - eval_start_time
 
@@ -151,7 +157,7 @@ def evaluate_model(model, dataloader, device, vocab, output_file, num_samples_to
           f"Loss={avg_loss:.4f}, "
           f"Perplexity={perplexity:.4f}, "
           f"Accuracy={accuracy:.2f}%, "
-          f"Edit Distance={avg_edit_distance:.4f}, "
+          f"Avg Levenshtein Distance={avg_edit_distance:.4f}, "
           f"Time={eval_time:.2f}s")
 
     return avg_loss, perplexity, accuracy, avg_edit_distance, eval_time
@@ -189,7 +195,7 @@ def plot_training_results(csv_file, experiment_name):
     plt.plot(data['Epoch'], data['Avg Levenshtein'], marker='o', label='Avg Levenshtein Distance', color='green')
     plt.title('Average Levenshtein Distance Over Epochs')
     plt.xlabel('Epoch')
-    plt.ylabel('Loss')
+    plt.ylabel('Levenshtein Distance')
     plt.grid(True)
     plt.legend()
 
@@ -197,6 +203,14 @@ def plot_training_results(csv_file, experiment_name):
     plt.subplot(2, 3, 4)
     plt.plot(data['Epoch'], data['Loss (Cross-Entropy)'], marker='o', label='Cross-Entropy Loss', color='red')
     plt.title('Cross-Entropy Loss Over Epochs')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.grid(True)
+    plt.legend()
+
+    plt.subplot(2, 3, 5)
+    plt.plot(data['Epoch'], data['Execution Time (s)'], marker='o', label='Runtime per Epoch', color='purple')
+    plt.title('Runtime Per Epoch')
     plt.xlabel('Epoch')
     plt.ylabel('Time (s)')
     plt.grid(True)
@@ -218,7 +232,7 @@ def plot_aggregated_results(experiment_results, output_folder):
         all_data.append(data)
     all_data = pd.concat(all_data)
 
-    metrics = ['Accuracy', 'Perplexity', 'Loss (Cross-Entropy)', 'Execution Time (s)']
+    metrics = ['Accuracy', 'Perplexity', 'Loss (Cross-Entropy)', 'Avg Levenshtein', 'Execution Time (s)']
     for metric in metrics:
         plt.figure(figsize=(10, 6))
         for experiment in all_data['Experiment'].unique():

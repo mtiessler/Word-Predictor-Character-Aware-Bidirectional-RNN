@@ -79,7 +79,7 @@ def run_experiment(config_file):
     csv_file_path = os.path.join(experiment_folder, f"{experiment_name}_results.csv")
 
     csv_headers = [
-        "Epoch", "Loss (Cross-Entropy)", "Perplexity", "Accuracy", "Execution Time (s)"
+        "Epoch", "Loss (Cross-Entropy)", "Perplexity", "Accuracy", "Avg Levenshtein", "Execution Time (s)"
     ]
     with open(csv_file_path, "w", newline="") as csv_file:
         writer = csv.writer(csv_file)
@@ -128,8 +128,8 @@ def run_experiment(config_file):
 def main():
     experiment_configs = [
         "experiment1_baseline_config.csv",
-        "experiment2_variation_config.csv",
-        "experiment3_tuned_config.csv"
+        "experiment2_red_params_fast_conv.csv",
+        "experiment3_larger_model.csv"
     ]
 
     # Check if smoke test should be run
