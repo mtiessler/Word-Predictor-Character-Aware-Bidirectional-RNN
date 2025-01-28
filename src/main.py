@@ -159,9 +159,10 @@ def run_experiment(config_file, train_texts, val_texts, test_texts):
 
 def main():
     experiment_configs = [
-        "experiment1_baseline_config.csv",
-        "experiment2_red_params_fast_conv.csv",
-        "experiment3_larger_model.csv"
+        "1_baseline_config.csv",
+        "2_red_params_fast_conv.csv",
+        "3_larger_model.csv",
+        "4_small_experiment.csv"
     ]
 
     smoke_test_enabled = os.getenv("SMOKE_TEST", "false").lower() == "true"
