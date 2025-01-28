@@ -166,11 +166,12 @@ def main():
         return
 
     experiment_configs = [
-        os.path.join(experiments_dir, "1_baseline_config.csv"),
-        os.path.join(experiments_dir, "2_red_params_fast_conv.csv"),
-        os.path.join(experiments_dir, "3_larger_model.csv"),
+        # os.path.join(experiments_dir, "1_baseline_config.csv"),
+        # os.path.join(experiments_dir, "2_red_params_fast_conv.csv"),
+        # os.path.join(experiments_dir, "3_larger_model.csv"),
         os.path.join(experiments_dir, "4_small_experiment.csv")
     ]
+
     # Load datasets
     print("Loading datasets...")
     train_texts, val_texts, test_texts = load_text_datasets()
