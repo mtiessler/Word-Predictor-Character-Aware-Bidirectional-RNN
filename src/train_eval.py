@@ -8,7 +8,14 @@ import matplotlib.pyplot as plt
 from nltk.metrics import edit_distance
 
 
-def train_model(model, dataloader, optimizer, device, epochs, csv_file_path, patience, improvement_threshold):
+def train_model(model,
+                dataloader,
+                optimizer,
+                device,
+                epochs,
+                result_csv_file_path,
+                patience,
+                improvement_threshold):
     criterion = nn.CrossEntropyLoss(ignore_index=0)
     model.train()
 
@@ -61,7 +68,7 @@ def train_model(model, dataloader, optimizer, device, epochs, csv_file_path, pat
         avg_edit_distance = total_edit_distance / num_predictions if num_predictions > 0 else 0
         epoch_time = time.time() - epoch_start_time
 
-        with open(csv_file_path, "a", newline="") as csv_file:
+        with open(result_csv_file_path, "a", newline="") as csv_file:
             writer = csv.writer(csv_file)
             writer.writerow([epoch + 1, avg_loss, perplexity, accuracy, avg_edit_distance, epoch_time])
 
@@ -80,7 +87,12 @@ def train_model(model, dataloader, optimizer, device, epochs, csv_file_path, pat
             break
 
 
-def evaluate_model(model, dataloader, device, vocab, output_file, num_samples_to_save=50):
+def evaluate_model(model,
+                   dataloader,
+                   device,
+                   vocab,
+                   output_file,
+                   num_samples_to_save=50):
 
     criterion = nn.CrossEntropyLoss(ignore_index=0)
     model.eval()
@@ -93,7 +105,7 @@ def evaluate_model(model, dataloader, device, vocab, output_file, num_samples_to
     # Reverse the vocab dictionary for index-to-word mapping
     idx_to_word = {idx: word for word, idx in vocab.items()}
 
-    print("Starting Evaluation...")
+    print(f"Starting Evaluation for {output_file.split('csv')[0]}...")
     eval_start_time = time.time()
 
     # Open CSV file for logging
