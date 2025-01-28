@@ -31,7 +31,7 @@ def train_model(model,
         total_edit_distance = 0
         num_predictions = 0
 
-        for inputs, targets, char_inputs in dataloader:
+        for inputs, targets, char_inputs, _ in dataloader:
             inputs, targets, char_inputs = (
                 inputs.to(device),
                 targets.to(device),
@@ -116,12 +116,12 @@ def evaluate_model(model,
         saved_samples = 0
 
         with torch.no_grad():
-            for batch in dataloader:
+            for batch_idx, batch in enumerate(dataloader):
+                # Unpack batch
                 if len(batch) == 4:
-                    inputs, targets, char_inputs, sentences = batch
+                    inputs, targets, char_inputs, original_sentences = batch
                 else:
-                    inputs, targets, char_inputs = batch
-                    sentences = [f"Sample {i+1}" for i in range(len(targets))]
+                    raise ValueError("Dataloader must provide original sentences as the fourth item in the batch.")
 
                 inputs, targets, char_inputs = (
                     inputs.to(device),
@@ -131,33 +131,47 @@ def evaluate_model(model,
 
                 # Forward pass
                 outputs = model(inputs, char_inputs)
-                outputs = outputs.view(-1, outputs.size(-1))
-                targets = targets.view(-1)
+                batch_size, seq_len, _ = outputs.size()
 
                 # Compute loss
-                loss = criterion(outputs, targets)
+                loss = criterion(outputs.view(-1, outputs.size(-1)), targets.view(-1))
                 total_loss += loss.item()
 
                 # Compute predictions
-                predictions = torch.argmax(outputs, dim=1)
+                predictions = torch.argmax(outputs, dim=-1)
 
-                valid_mask = targets != criterion.ignore_index
-                valid_targets = targets[valid_mask]
-                valid_predictions = predictions[valid_mask]
+                # Process each sequence in the batch
+                for seq_idx in range(batch_size):
+                    input_sentence = original_sentences[seq_idx]  # Retrieve the full sentence
+                    for token_idx in range(seq_len):
+                        target_token = targets[seq_idx, token_idx].item()
+                        predicted_token = predictions[seq_idx, token_idx].item()
 
-                valid_sentences = [sentences[i] for i in range(len(sentences)) if valid_mask[i]] if sentences else []
-                for i in range(min(len(valid_targets), num_samples_to_save - saved_samples)):
-                    input_sentence = valid_sentences[i] if i < len(valid_sentences) else "N/A"
-                    target_word = idx_to_word.get(valid_targets[i].item(), "<unk>")
-                    predicted_word = idx_to_word.get(valid_predictions[i].item(), "<unk>")
-                    lev_dist = edit_distance(predicted_word, target_word) if target_word != "<pad>" else "N/A"
+                        # Skip padding tokens
+                        if target_token == 0:
+                            continue
 
-                    writer.writerow([saved_samples + 1, input_sentence, target_word, predicted_word, lev_dist])
-                    saved_samples += 1
+                        target_word = idx_to_word.get(target_token, "<unk>")
+                        predicted_word = idx_to_word.get(predicted_token, "<unk>")
+                        lev_dist = edit_distance(predicted_word, target_word)
 
-                    if target_word != "<pad>":
-                        total_edit_distance += lev_dist
-                        num_predictions += 1
+                        writer.writerow([
+                            saved_samples + 1,
+                            input_sentence,
+                            target_word,
+                            predicted_word,
+                            lev_dist
+                        ])
+                        saved_samples += 1
+
+                        if saved_samples >= num_samples_to_save:
+                            break
+
+                    if saved_samples >= num_samples_to_save:
+                        break
+
+                if saved_samples >= num_samples_to_save:
+                    break
 
     avg_loss = total_loss / len(dataloader) if len(dataloader) > 0 else 0
     perplexity = torch.exp(torch.tensor(avg_loss)).item() if avg_loss > 0 else float("inf")
@@ -245,16 +259,25 @@ def plot_aggregated_results(experiment_results, output_folder):
     all_data = pd.concat(all_data)
 
     metrics = ['Accuracy', 'Perplexity', 'Loss (Cross-Entropy)', 'Avg Levenshtein', 'Execution Time (s)']
-    for metric in metrics:
-        plt.figure(figsize=(10, 6))
+
+    num_metrics = len(metrics)
+    fig, axes = plt.subplots(num_metrics, 1, figsize=(10, 6 * num_metrics), sharex=True)
+
+    for i, metric in enumerate(metrics):
+        ax = axes[i]
         for experiment in all_data['Experiment'].unique():
             exp_data = all_data[all_data['Experiment'] == experiment]
-            plt.plot(exp_data['Epoch'], exp_data[metric], marker='o', label=experiment)
-        plt.title(f'{metric} Across Experiments')
-        plt.xlabel('Epoch')
-        plt.ylabel(metric)
-        plt.grid(True)
-        plt.legend()
-        plot_path = os.path.join(output_folder, f"aggregated_{metric.lower().replace(' ', '_')}.png")
-        plt.savefig(plot_path)
-        print(f"Saved aggregated plot to {plot_path}.")
+            ax.plot(exp_data['Epoch'], exp_data[metric], marker='o', label=experiment)
+        ax.set_title(f'{metric} Across Experiments')
+        ax.set_ylabel(metric)
+        ax.grid(True)
+        ax.legend()
+
+    axes[-1].set_xlabel('Epoch')
+
+    plot_path = os.path.join(output_folder, "aggregated_metrics.png")
+    plt.tight_layout()
+    plt.savefig(plot_path)
+    plt.close(fig)
+    print(f"Saved aggregated metrics plot to {plot_path}.")
+
