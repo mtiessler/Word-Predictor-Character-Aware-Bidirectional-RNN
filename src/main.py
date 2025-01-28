@@ -158,18 +158,19 @@ def run_experiment(config_file, train_texts, val_texts, test_texts):
 
 
 def main():
-    experiment_configs = [
-        "1_baseline_config.csv",
-        "2_red_params_fast_conv.csv",
-        "3_larger_model.csv",
-        "4_small_experiment.csv"
-    ]
+    experiments_dir = os.path.join(os.pardir, "experiments")
 
     smoke_test_enabled = os.getenv("SMOKE_TEST", "false").lower() == "true"
     if smoke_test_enabled:
         smoke_test()
         return
 
+    experiment_configs = [
+        os.path.join(experiments_dir, "1_baseline_config.csv"),
+        os.path.join(experiments_dir, "2_red_params_fast_conv.csv"),
+        os.path.join(experiments_dir, "3_larger_model.csv"),
+        os.path.join(experiments_dir, "4_small_experiment.csv")
+    ]
     # Load datasets
     print("Loading datasets...")
     train_texts, val_texts, test_texts = load_text_datasets()
