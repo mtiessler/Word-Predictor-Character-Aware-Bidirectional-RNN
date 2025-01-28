@@ -8,6 +8,15 @@ import torch
 
 
 def load_config_from_csv(config_file):
+    """
+    Load experiment configurations from a CSV file.
+
+    Args:
+        config_file (str): Path to the CSV file containing key-value pairs of configurations.
+
+    Returns:
+        dict: A dictionary containing the experiment configurations with keys and parsed values.
+    """
     config = {}
     with open(config_file, "r") as file:
         reader = csv.DictReader(file)
@@ -25,6 +34,15 @@ def load_config_from_csv(config_file):
 
 
 def smoke_test():
+    """
+    Perform a smoke test to verify that the model, dataset, and training loop work correctly.
+
+    This function uses a small synthetic dataset to check the end-to-end workflow of:
+        - Dataset creation
+        - Model initialization
+        - Forward and backward passes
+        - Loss calculation and optimization
+    """
     print("Running smoke test...")
     synthetic_texts = ["this is a test", "another test sentence"]
     word_vocab = {word: idx for idx, word in enumerate(["<pad>", "this", "is", "a", "test", "another", "sentence"])}
@@ -68,7 +86,8 @@ def smoke_test():
     print("Smoke test passed!")
 
 
-def run_experiment(config_file):
+def run_experiment(config_file, train_texts, val_texts, test_texts):
+
     print(f"Running experiment with config: {config_file}")
     config = load_config_from_csv(config_file)
 
@@ -85,8 +104,7 @@ def run_experiment(config_file):
         writer = csv.writer(csv_file)
         writer.writerow(csv_headers)
 
-    print("Loading dataset...")
-    train_texts, val_texts = load_text_datasets()
+    print("Building vocabularies and datasets...")
     word_vocab, char_vocab, tokenizer = load_vocab_and_tokenizer(train_texts)
 
     train_dataset = TextDataset(
@@ -97,10 +115,17 @@ def run_experiment(config_file):
         val_texts, word_vocab, char_vocab, tokenizer,
         max_word_len=config["MAX_WORD_LEN"], max_seq_len=config["MAX_SEQ_LEN"]
     )
+    test_dataset = TextDataset(
+        test_texts, word_vocab, char_vocab, tokenizer,
+        max_word_len=config["MAX_WORD_LEN"], max_seq_len=config["MAX_SEQ_LEN"]
+    )
+
     train_loader = DataLoader(train_dataset, batch_size=config["BATCH_SIZE"], collate_fn=collate_fn, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=config["BATCH_SIZE"], collate_fn=collate_fn)
+    test_loader = DataLoader(test_dataset, batch_size=config["BATCH_SIZE"], collate_fn=collate_fn)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
     model = LSTMWithCacheAndChar(
         word_vocab_size=len(word_vocab), char_vocab_size=len(char_vocab),
         word_embed_dim=config["WORD_EMBED_DIM"], char_embed_dim=config["CHAR_EMBED_DIM"],
@@ -111,15 +136,22 @@ def run_experiment(config_file):
 
     optimizer = torch.optim.Adam(model.parameters(), lr=config["LEARNING_RATE"])
 
+    # Training Phase
     train_model(
         model, train_loader, optimizer, device,
         config["EPOCHS"], csv_file_path,
         config["PATIENCE"], config["IMPROVEMENT_THRESHOLD"]
     )
 
-    evaluation_csv = os.path.join(experiment_folder, f"{experiment_name}_predictions.csv")
-    evaluate_model(model, val_loader, device, word_vocab, evaluation_csv)
+    # Validation Phase
+    val_predictions_path = os.path.join(experiment_folder, f"{experiment_name}_val_predictions.csv")
+    evaluate_model(model, val_loader, device, word_vocab, val_predictions_path)
 
+    # Test Phase
+    test_predictions_path = os.path.join(experiment_folder, f"{experiment_name}_test_predictions.csv")
+    evaluate_model(model, test_loader, device, word_vocab, test_predictions_path)
+
+    # Plot Training Results
     plot_training_results(csv_file_path, experiment_name)
 
     return csv_file_path
@@ -132,17 +164,21 @@ def main():
         "experiment3_larger_model.csv"
     ]
 
-    # Check if smoke test should be run
     smoke_test_enabled = os.getenv("SMOKE_TEST", "false").lower() == "true"
     if smoke_test_enabled:
         smoke_test()
         return
 
+    # Load datasets
+    print("Loading datasets...")
+    train_texts, val_texts, test_texts = load_text_datasets()
+
     experiment_results = {}
     for config_file in experiment_configs:
-        result_csv = run_experiment(config_file)
+        result_csv = run_experiment(config_file, train_texts, val_texts, test_texts)
         experiment_results[config_file.split('.')[0]] = result_csv
 
+    # Plot aggregated results
     aggregated_results_folder = "results/final_evaluation"
     plot_aggregated_results(experiment_results, aggregated_results_folder)
 
