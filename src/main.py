@@ -118,11 +118,12 @@ def run_experiment(config_file):
     )
 
     evaluation_csv = os.path.join(experiment_folder, f"{experiment_name}_predictions.csv")
-    evaluate_model(model, val_loader, device, word_vocab, evaluation_csv)
+    summary_csv = os.path.join(experiment_folder, f"{experiment_name}_summary.csv")
+    evaluate_model(model, val_loader, device, word_vocab, summary_csv, evaluation_csv)
 
     plot_training_results(csv_file_path, experiment_name)
 
-    return csv_file_path
+    return csv_file_path, summary_csv
 
 
 def main():
@@ -140,8 +141,8 @@ def main():
 
     experiment_results = {}
     for config_file in experiment_configs:
-        result_csv = run_experiment(config_file)
-        experiment_results[config_file.split('.')[0]] = result_csv
+        result_csv, summary_csv = run_experiment(config_file)
+        experiment_results[config_file.split('.')[0]] = (result_csv,summary_csv) 
 
     aggregated_results_folder = "results/final_evaluation"
     plot_aggregated_results(experiment_results, aggregated_results_folder)
