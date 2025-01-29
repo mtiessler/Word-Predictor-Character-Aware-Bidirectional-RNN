@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 import pandas as pd
 import matplotlib.pyplot as plt
+import seaborn as sns
 from nltk.metrics import edit_distance
 
 
@@ -91,6 +92,7 @@ def evaluate_model(model,
                    dataloader,
                    device,
                    vocab,
+                   summary_file,
                    output_file,
                    num_samples_to_save=50):
 
@@ -179,6 +181,12 @@ def evaluate_model(model,
     avg_edit_distance = total_edit_distance / num_predictions if num_predictions > 0 else 0
     eval_time = time.time() - eval_start_time
 
+    with open(summary_file, "w", newline="") as summary_csv:
+      summary_writer = csv.writer(summary_csv)
+      summary_writer.writerow(["Loss", "Perplexity", "Accuracy", "Avg Levenshtein Distance", "Evaluation Time (s)"])
+      summary_writer.writerow([avg_loss, perplexity, accuracy, avg_edit_distance, eval_time])
+
+
     print(f"Evaluation Summary: "
           f"Loss={avg_loss:.4f}, "
           f"Perplexity={perplexity:.4f}, "
@@ -252,32 +260,43 @@ def plot_aggregated_results(experiment_results, output_folder):
     os.makedirs(output_folder, exist_ok=True)
 
     all_data = []
+    summary_data = []
     for experiment, csv_file in experiment_results.items():
-        data = pd.read_csv(csv_file)
+        data = pd.read_csv(csv_file[0])
         data['Experiment'] = experiment
         all_data.append(data)
+
+        summary_csv = pd.read_csv(csv_file[1])
+        summary_csv['Experiment'] = experiment
+        summary_data.append(summary_csv)
     all_data = pd.concat(all_data)
+    summary_data = pd.concat(summary_data)
 
     metrics = ['Accuracy', 'Perplexity', 'Loss (Cross-Entropy)', 'Avg Levenshtein', 'Execution Time (s)']
-
-    num_metrics = len(metrics)
-    fig, axes = plt.subplots(num_metrics, 1, figsize=(10, 6 * num_metrics), sharex=True)
-
-    for i, metric in enumerate(metrics):
-        ax = axes[i]
+    for metric in metrics:
+        plt.figure(figsize=(10, 6))
         for experiment in all_data['Experiment'].unique():
             exp_data = all_data[all_data['Experiment'] == experiment]
-            ax.plot(exp_data['Epoch'], exp_data[metric], marker='o', label=experiment)
-        ax.set_title(f'{metric} Across Experiments')
-        ax.set_ylabel(metric)
-        ax.grid(True)
-        ax.legend()
+            plt.plot(exp_data['Epoch'], exp_data[metric], marker='o', label=experiment)
+        plt.title(f'{metric} Across Experiments')
+        plt.xlabel('Epoch')
+        plt.ylabel(metric)
+        plt.grid(True)
+        plt.legend()
+        plot_path = os.path.join(output_folder, f"aggregated_{metric.lower().replace(' ', '_')}.png")
+        plt.savefig(plot_path)
+        print(f"Saved aggregated plot to {plot_path}.")
+        plt.close()
 
-    axes[-1].set_xlabel('Epoch')
-
-    plot_path = os.path.join(output_folder, "aggregated_metrics.png")
-    plt.tight_layout()
-    plt.savefig(plot_path)
-    plt.close(fig)
-    print(f"Saved aggregated metrics plot to {plot_path}.")
-
+    summary_metrics = ['Accuracy', 'Perplexity', 'Loss', 'Avg Levenshtein Distance', 'Evaluation Time (s)']
+    for metric in summary_metrics:
+        plt.figure(figsize=(8, 6))
+        sns.barplot(data=summary_data, x='Experiment', y=metric, palette='viridis')
+        plt.title(f'{metric} by Experiment')
+        plt.xlabel('Experiment')
+        plt.ylabel(metric)
+        plt.grid(axis='y')
+        bar_plot_path = os.path.join(output_folder, f"barplot_{metric.lower().replace(' ', '_')}.png")
+        plt.savefig(bar_plot_path)
+        print(f"Saved bar plot to {bar_plot_path}.")
+        plt.close()
