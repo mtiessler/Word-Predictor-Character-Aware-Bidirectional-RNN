@@ -138,19 +138,25 @@ def run_experiment(config_file, train_texts, val_texts, test_texts):
 
     # Training Phase
     train_model(
-        model, train_loader, optimizer, device,
-        config["EPOCHS"], csv_file_path,
-        config["PATIENCE"], config["IMPROVEMENT_THRESHOLD"]
+        model,
+        train_loader,
+        optimizer,
+        device,
+        config["EPOCHS"],
+        csv_file_path,
+        config["PATIENCE"],
+        config["IMPROVEMENT_THRESHOLD"]
     )
 
     # Validation Phase
     evaluation_csv = os.path.join(experiment_folder, f"{experiment_name}_predictions.csv")
-    summary_csv = os.path.join(experiment_folder, f"{experiment_name}_summary.csv")
+    summary_csv = os.path.join(experiment_folder, f"{experiment_name}_eval_summary.csv")
     evaluate_model(model, val_loader, device, word_vocab, summary_csv, evaluation_csv)
 
     # Test Phase
+    summary_csv = os.path.join(experiment_folder, f"{experiment_name}_test_summary.csv")
     test_predictions_path = os.path.join(experiment_folder, f"{experiment_name}_test_predictions.csv")
-    evaluate_model(model, test_loader, device, word_vocab, test_predictions_path)
+    evaluate_model(model, test_loader, device, word_vocab, summary_csv, test_predictions_path)
 
     # Plot Training Results
     plot_training_results(csv_file_path, experiment_name)

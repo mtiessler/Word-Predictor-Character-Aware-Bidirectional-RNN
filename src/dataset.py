@@ -1,190 +1,190 @@
-import os
-import csv
-from torch.utils.data import DataLoader
-from dataset import load_vocab_and_tokenizer, load_text_datasets, TextDataset, collate_fn
-from model import LSTMWithCacheAndChar
-from train_eval import train_model, evaluate_model, plot_training_results, plot_aggregated_results
 import torch
+from torch.utils.data import Dataset
+from torch.nn.utils.rnn import pad_sequence
+from datasets import load_dataset
+from collections import Counter
+import re
 
 
-def load_config_from_csv(config_file):
+def clean_text(text):
     """
-    Load experiment configurations from a CSV file.
+    Cleans a given text by converting it to lowercase and removing non-alphanumeric characters.
 
     Args:
-        config_file (str): Path to the CSV file containing key-value pairs of configurations.
+        text (str): The input text.
 
     Returns:
-        dict: A dictionary containing the experiment configurations with keys and parsed values.
+        str: The cleaned text.
     """
-    config = {}
-    with open(config_file, "r") as file:
-        reader = csv.DictReader(file)
-        for row in reader:
-            key = row["key"]
-            value = row["value"]
-            if value.isdigit():
-                config[key] = int(value)
-            else:
-                try:
-                    config[key] = float(value)
-                except ValueError:
-                    config[key] = value
-    return config
+    text = text.lower()
+    text = re.sub(r"[^a-zA-Z0-9\s]", "", text)
+    return text.strip()
 
 
-def smoke_test():
+def tokenize_by_char(text):
     """
-    Perform a smoke test to verify that the model, dataset, and training loop work correctly.
+    Tokenizes a given text into individual characters.
 
-    This function uses a small synthetic dataset to check the end-to-end workflow of:
-        - Dataset creation
-        - Model initialization
-        - Forward and backward passes
-        - Loss calculation and optimization
+    Args:
+        text (str): The input text.
+
+    Returns:
+        list: A list of characters from the input text.
     """
-    print("Running smoke test...")
-    synthetic_texts = ["this is a test", "another test sentence"]
-    word_vocab = {word: idx for idx, word in enumerate(["<pad>", "this", "is", "a", "test", "another", "sentence"])}
-    char_vocab = {char: idx for idx, char in enumerate(list("abcdefghijklmnopqrstuvwxyz"))}
-    tokenizer = lambda text: [word_vocab[word] for word in text.split() if word in word_vocab]
+    return list(text)
 
-    dataset = TextDataset(
-        synthetic_texts, word_vocab, char_vocab, tokenizer, max_word_len=5, max_seq_len=10
+
+def load_vocab_and_tokenizer(train_texts):
+    """
+    Constructs word and character vocabularies from the training texts and a tokenizer.
+
+    Args:
+        train_texts (list): List of training text strings.
+
+    Returns:
+        tuple: A tuple containing:
+            - word_vocab (dict): Vocabulary mapping words to indices.
+            - char_vocab (dict): Vocabulary mapping characters to indices.
+            - tokenizer (function): A function for tokenizing text into words.
+    """
+    print("Building vocabularies and tokenizer...")
+    tokenizer = lambda x: x.split()  # Simple whitespace tokenizer
+
+    word_counter = Counter()
+    char_counter = Counter()
+
+    for line in train_texts:
+        clean_line = clean_text(line)
+        if clean_line:  # Skip empty lines
+            word_counter.update(tokenizer(clean_line))
+            char_counter.update(tokenize_by_char(clean_line))
+
+    # Add special tokens and build vocabularies
+    word_vocab = {"<pad>": 0, "<unk>": 1}
+    word_vocab.update({word: idx for idx, (word, _) in enumerate(word_counter.items(), start=2)})
+
+    char_vocab = {"<pad>": 0, "<unk>": 1}
+    char_vocab.update({char: idx for idx, (char, _) in enumerate(char_counter.items(), start=2)})
+
+    print(f"Word vocab size: {len(word_vocab)}, Char vocab size: {len(char_vocab)}")
+    return word_vocab, char_vocab, tokenizer
+
+
+def load_text_datasets():
+    """
+    Loads the WikiText-2 dataset and splits it into training, validation, and test sets.
+
+    Returns:
+        tuple: A tuple containing:
+            - train_texts (list): List of training text strings.
+            - val_texts (list): List of validation text strings.
+            - test_texts (list): List of test text strings.
+    """
+    print("Loading WikiText-2 dataset...")
+    dataset = load_dataset("wikitext", "wikitext-2-raw-v1")
+
+    train_texts = [text for text in dataset["train"]["text"] if text.strip()]
+    val_texts = [text for text in dataset["validation"]["text"] if text.strip()]
+    test_texts = [text for text in dataset["test"]["text"] if text.strip()]
+
+    print(
+        f"Loaded dataset: Train texts = {len(train_texts)}, Validation texts = {len(val_texts)}, Test texts = {len(test_texts)}")
+    return train_texts, val_texts, test_texts
+
+
+class TextDataset(Dataset):
+    """
+    A custom dataset class for handling text data with word and character tokenization.
+
+    Args:
+        texts (list): List of text strings.
+        word_vocab (dict): Vocabulary mapping words to indices.
+        char_vocab (dict): Vocabulary mapping characters to indices.
+        tokenizer (function): A function for tokenizing text into words.
+        max_word_len (int): Maximum length of character sequences for words.
+        max_seq_len (int): Maximum length of word sequences.
+    """
+    def __init__(self, texts, word_vocab, char_vocab, tokenizer, max_word_len=10, max_seq_len=50):
+        print(f"Initializing dataset with {len(texts)} texts...")
+        self.texts = [clean_text(text) for text in texts if text.strip()]
+        self.word_vocab = word_vocab
+        self.char_vocab = char_vocab
+        self.tokenizer = tokenizer
+        self.max_word_len = max_word_len
+        self.max_seq_len = max_seq_len
+        self.data = self._prepare_data()
+
+    def _prepare_data(self):
+        """
+        Prepares the dataset by tokenizing text into word sequences and padding/truncating them.
+
+        Returns:
+            list: A list of padded and truncated word token sequences.
+        """
+        data = []
+        for text in self.texts:
+            word_tokens = [self.word_vocab.get(token, 1) for token in self.tokenizer(text)]
+            if word_tokens:  # Keep sequences with at least one token
+                if len(word_tokens) < self.max_seq_len:
+                    word_tokens += [0] * (self.max_seq_len - len(word_tokens))  # Pad to max_seq_len
+                data.append(word_tokens[:self.max_seq_len])  # Truncate if longer
+        print(f"Prepared {len(data)} samples for the dataset.")
+        return data
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        """
+        Retrieves a single data sample at the specified index.
+
+        Returns:
+            tuple: A tuple containing:
+                - word_seq (torch.Tensor): Word token sequence (input).
+                - target_seq (torch.Tensor): Word token sequence (target for prediction).
+                - char_seq (torch.Tensor): Character token sequences for words in the input.
+                - original_sentence (str): The original sentence for evaluation.
+        """
+        word_seq = self.data[idx]
+        char_seq = [
+            [self.char_vocab.get(char, 1) for char in list(str(token))] for token in word_seq
+        ]
+        char_seq = [
+            chars[:self.max_word_len] + [0] * (self.max_word_len - len(chars))
+            for chars in char_seq
+        ]
+        return torch.tensor(word_seq[:-1]), torch.tensor(word_seq[1:]), torch.tensor(char_seq[:-1]), self.texts[idx]
+
+
+def collate_fn(batch):
+    """
+    Custom collation function for batching data samples.
+
+    Args:
+        batch (list): A list of tuples, where each tuple contains:
+            - inputs (torch.Tensor): Input word token sequence.
+            - targets (torch.Tensor): Target word token sequence.
+            - char_inputs (torch.Tensor): Character token sequences.
+            - original_sentence (str): The original text.
+
+    Returns:
+        tuple: A tuple containing:
+            - inputs (torch.Tensor): Padded input sequences.
+            - targets (torch.Tensor): Padded target sequences.
+            - char_inputs (torch.Tensor): Padded character token sequences.
+            - original_sentences (list): List of original sentences.
+    """
+    inputs, targets, char_inputs, original_sentences = zip(*batch)
+
+    # Pad sequences for word-level inputs and targets
+    inputs = pad_sequence(inputs, batch_first=True, padding_value=0)
+    targets = pad_sequence(targets, batch_first=True, padding_value=0)
+
+    # Pad character sequences
+    char_inputs = pad_sequence(
+        [pad_sequence(x, batch_first=True, padding_value=0) for x in char_inputs],
+        batch_first=True,
+        padding_value=0
     )
-    dataloader = DataLoader(dataset, batch_size=2, collate_fn=collate_fn, shuffle=False)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = LSTMWithCacheAndChar(
-        word_vocab_size=len(word_vocab),
-        char_vocab_size=len(char_vocab),
-        word_embed_dim=8,
-        char_embed_dim=4,
-        hidden_dim=16,
-        char_hidden_dim=8,
-        num_layers=1,
-        cache_size=10,
-        dropout_rate=0.1,
-        l2_lambda=1e-4
-    ).to(device)
-
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-    criterion = torch.nn.CrossEntropyLoss(ignore_index=0)
-
-    for inputs, targets, char_inputs in dataloader:
-        inputs, targets, char_inputs = inputs.to(device), targets.to(device), char_inputs.to(device)
-        optimizer.zero_grad()
-        outputs = model(inputs, char_inputs)
-        outputs = outputs.view(-1, outputs.size(-1))
-        targets = targets.view(-1)
-        loss = criterion(outputs, targets)
-        loss.backward()
-        optimizer.step()
-        print(f"Smoke Test Loss: {loss.item():.4f}")
-        break
-
-    print("Smoke test passed!")
-
-
-def run_experiment(config_file, train_texts, val_texts, test_texts):
-
-    print(f"Running experiment with config: {config_file}")
-    config = load_config_from_csv(config_file)
-
-    experiment_name = f"{config_file.split('.')[0]}"
-    experiment_folder = f"results/{experiment_name}"
-    os.makedirs(experiment_folder, exist_ok=True)
-
-    csv_file_path = os.path.join(experiment_folder, f"{experiment_name}_results.csv")
-
-    csv_headers = [
-        "Epoch", "Loss (Cross-Entropy)", "Perplexity", "Accuracy", "Avg Levenshtein", "Execution Time (s)"
-    ]
-    with open(csv_file_path, "w", newline="") as csv_file:
-        writer = csv.writer(csv_file)
-        writer.writerow(csv_headers)
-
-    print("Building vocabularies and datasets...")
-    word_vocab, char_vocab, tokenizer = load_vocab_and_tokenizer(train_texts)
-
-    train_dataset = TextDataset(
-        train_texts, word_vocab, char_vocab, tokenizer,
-        max_word_len=config["MAX_WORD_LEN"], max_seq_len=config["MAX_SEQ_LEN"]
-    )
-    val_dataset = TextDataset(
-        val_texts, word_vocab, char_vocab, tokenizer,
-        max_word_len=config["MAX_WORD_LEN"], max_seq_len=config["MAX_SEQ_LEN"]
-    )
-    test_dataset = TextDataset(
-        test_texts, word_vocab, char_vocab, tokenizer,
-        max_word_len=config["MAX_WORD_LEN"], max_seq_len=config["MAX_SEQ_LEN"]
-    )
-
-    train_loader = DataLoader(train_dataset, batch_size=config["BATCH_SIZE"], collate_fn=collate_fn, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=config["BATCH_SIZE"], collate_fn=collate_fn)
-    test_loader = DataLoader(test_dataset, batch_size=config["BATCH_SIZE"], collate_fn=collate_fn)
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    model = LSTMWithCacheAndChar(
-        word_vocab_size=len(word_vocab), char_vocab_size=len(char_vocab),
-        word_embed_dim=config["WORD_EMBED_DIM"], char_embed_dim=config["CHAR_EMBED_DIM"],
-        hidden_dim=config["HIDDEN_DIM"], char_hidden_dim=config["CHAR_HIDDEN_DIM"],
-        num_layers=config["NUM_LAYERS"], cache_size=config["CACHE_SIZE"],
-        dropout_rate=config["DROPOUT_RATE"], l2_lambda=config["L2_LAMBDA"]
-    ).to(device)
-
-    optimizer = torch.optim.Adam(model.parameters(), lr=config["LEARNING_RATE"])
-
-    # Training Phase
-    train_model(
-        model, train_loader, optimizer, device,
-        config["EPOCHS"], csv_file_path,
-        config["PATIENCE"], config["IMPROVEMENT_THRESHOLD"]
-    )
-
-    # Validation Phase
-    val_predictions_path = os.path.join(experiment_folder, f"{experiment_name}_val_predictions.csv")
-    evaluate_model(model, val_loader, device, word_vocab, val_predictions_path)
-
-    # Test Phase
-    test_predictions_path = os.path.join(experiment_folder, f"{experiment_name}_test_predictions.csv")
-    evaluate_model(model, test_loader, device, word_vocab, test_predictions_path)
-
-    # Plot Training Results
-    plot_training_results(csv_file_path, experiment_name)
-
-    return csv_file_path
-
-
-def main():
-    experiments_dir = os.path.join(os.pardir, "experiments")
-
-    smoke_test_enabled = os.getenv("SMOKE_TEST", "false").lower() == "true"
-    if smoke_test_enabled:
-        smoke_test()
-        return
-
-    experiment_configs = [
-        # os.path.join(experiments_dir, "1_baseline_config.csv"),
-        # os.path.join(experiments_dir, "2_red_params_fast_conv.csv"),
-        # os.path.join(experiments_dir, "3_larger_model.csv"),
-        os.path.join(experiments_dir, "4_small_experiment.csv")
-    ]
-
-    # Load datasets
-    print("Loading datasets...")
-    train_texts, val_texts, test_texts = load_text_datasets()
-
-    experiment_results = {}
-    for config_file in experiment_configs:
-        result_csv = run_experiment(config_file, train_texts, val_texts, test_texts)
-        experiment_results[config_file.split('.')[0]] = result_csv
-
-    # Plot aggregated results
-    aggregated_results_folder = "results/final_evaluation"
-    plot_aggregated_results(experiment_results, aggregated_results_folder)
-
-
-if __name__ == "__main__":
-    main()
+    return inputs, targets, char_inputs, list(original_sentences)
