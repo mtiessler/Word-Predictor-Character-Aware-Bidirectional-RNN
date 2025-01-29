@@ -1,3 +1,4 @@
+
 import os
 import csv
 from torch.utils.data import DataLoader
@@ -85,22 +86,25 @@ def smoke_test():
 
     print("Smoke test passed!")
 
+def run_experiment(experiment_name, config_file, train_texts, val_texts, test_texts):
 
-def run_experiment(config_file, train_texts, val_texts, test_texts):
-
-    print(f"Running experiment with config: {config_file}")
+    print(f"Running experiment {experiment_name}")
     config = load_config_from_csv(config_file)
 
-    experiment_name = f"{config_file.split('.')[0]}"
     experiment_folder = f"results/{experiment_name}"
     os.makedirs(experiment_folder, exist_ok=True)
 
-    csv_file_path = os.path.join(experiment_folder, f"{experiment_name}_results.csv")
+    training_path = os.path.join(experiment_folder, f"{experiment_name}_results.csv")
 
-    csv_headers = [
-        "Epoch", "Loss (Cross-Entropy)", "Perplexity", "Accuracy", "Avg Levenshtein", "Execution Time (s)"
-    ]
-    with open(csv_file_path, "w", newline="") as csv_file:
+    csv_headers = ["Epoch",
+                   "Loss (Cross-Entropy)",
+                   "Perplexity",
+                   "Accuracy",
+                   "Avg Levenshtein",
+                   "Execution Time (s)"]
+
+    # Create CSV file with headers
+    with open(training_path, "w", newline="") as csv_file:
         writer = csv.writer(csv_file)
         writer.writerow(csv_headers)
 
@@ -143,25 +147,51 @@ def run_experiment(config_file, train_texts, val_texts, test_texts):
         optimizer,
         device,
         config["EPOCHS"],
-        csv_file_path,
+        training_path,
         config["PATIENCE"],
         config["IMPROVEMENT_THRESHOLD"]
     )
 
+    # Plot Training Results
+    plot_training_results(training_path, experiment_name)
+
     # Validation Phase
-    evaluation_csv = os.path.join(experiment_folder, f"{experiment_name}_predictions.csv")
-    summary_csv = os.path.join(experiment_folder, f"{experiment_name}_eval_summary.csv")
-    evaluate_model(model, val_loader, device, word_vocab, summary_csv, evaluation_csv)
+    evaluation_prediction_path = os.path.join(experiment_folder, f"{experiment_name}_predictions.csv")
+    val_loss, val_perplexity, val_accuracy, val_edit_distance, val_time = evaluate_model(
+        model, val_loader, device, word_vocab, evaluation_prediction_path
+    )
+
+    # Append validation results to training CSV
+    with open(training_path, "a", newline="") as csv_file:
+        writer = csv.writer(csv_file)
+        writer.writerow([
+            "Validation",  # Epoch label
+            f"{val_loss:.4f}",
+            f"{val_perplexity:.4f}",
+            f"{val_accuracy:.2f}%",
+            f"{val_edit_distance:.4f}",
+            f"{val_time:.2f}"
+        ])
 
     # Test Phase
-    summary_csv = os.path.join(experiment_folder, f"{experiment_name}_test_summary.csv")
     test_predictions_path = os.path.join(experiment_folder, f"{experiment_name}_test_predictions.csv")
-    evaluate_model(model, test_loader, device, word_vocab, summary_csv, test_predictions_path)
+    test_loss, test_perplexity, test_accuracy, test_edit_distance, test_time = evaluate_model(
+        model, test_loader, device, word_vocab, test_predictions_path
+    )
 
-    # Plot Training Results
-    plot_training_results(csv_file_path, experiment_name)
+    # Append test results to training CSV
+    with open(training_path, "a", newline="") as csv_file:
+        writer = csv.writer(csv_file)
+        writer.writerow([
+            "Test",  # Epoch label
+            f"{test_loss:.4f}",
+            f"{test_perplexity:.4f}",
+            f"{test_accuracy:.2f}%",
+            f"{test_edit_distance:.4f}",
+            f"{test_time:.2f}"
+        ])
 
-    return csv_file_path, summary_csv
+    return training_path, evaluation_prediction_path, test_predictions_path
 
 
 def main():
@@ -172,26 +202,28 @@ def main():
         smoke_test()
         return
 
-    experiment_configs = [
-        os.path.join(experiments_dir, "1_baseline_config.csv"),
-        os.path.join(experiments_dir, "2_red_params_fast_conv.csv"),
-        os.path.join(experiments_dir, "3_larger_model.csv"),
-        os.path.join(experiments_dir, "4_small_experiment.csv")
-    ]
+    experiment_configs = {
+        "Baseline": os.path.join(experiments_dir, "1_baseline_config.csv"),
+        "Reduced Params Fast Conv": os.path.join(experiments_dir, "2_red_params_fast_conv.csv"),
+        "Larger Model": os.path.join(experiments_dir, "3_larger_model.csv"),
+    }
 
-    # Load datasets
     print("Loading datasets...")
     train_texts, val_texts, test_texts = load_text_datasets()
 
     experiment_results = {}
-    for config_file in experiment_configs:
-        result_csv, summary_csv = run_experiment(config_file, train_texts, val_texts, test_texts)
-        experiment_results[config_file.split('.')[0]] = (result_csv,summary_csv)
+    for exp_name, config_file in experiment_configs.items():
+        train_path, eval_path, test_path = run_experiment(exp_name, config_file, train_texts, val_texts, test_texts)
+
+        experiment_results[exp_name] = {
+            "training": train_path,
+            "evaluation": eval_path,
+            "test": test_path
+        }
 
     # Plot aggregated results
     aggregated_results_folder = "results/final_evaluation"
     plot_aggregated_results(experiment_results, aggregated_results_folder)
-
 
 if __name__ == "__main__":
     main()

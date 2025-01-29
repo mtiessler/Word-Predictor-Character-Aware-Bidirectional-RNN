@@ -92,10 +92,8 @@ def evaluate_model(model,
                    dataloader,
                    device,
                    vocab,
-                   summary_file,
                    output_file,
                    num_samples_to_save=50):
-
     criterion = nn.CrossEntropyLoss(ignore_index=0)
     model.eval()
     total_loss = 0
@@ -113,7 +111,8 @@ def evaluate_model(model,
     # Open CSV file for logging
     with open(output_file, "w", newline="") as csvfile:
         writer = csv.writer(csvfile)
-        writer.writerow(["Sample", "Input Sentence", "Target Word", "Predicted Word", "Levenshtein Distance"])
+        writer.writerow(
+            ["Sample", "Input Sentence", "Target Word", "Predicted Word", "Levenshtein Distance", "Correct?"])
 
         saved_samples = 0
 
@@ -145,11 +144,12 @@ def evaluate_model(model,
                 # Process each sequence in the batch
                 for seq_idx in range(batch_size):
                     input_sentence = original_sentences[seq_idx]  # Retrieve the full sentence
+
                     for token_idx in range(seq_len):
                         target_token = targets[seq_idx, token_idx].item()
                         predicted_token = predictions[seq_idx, token_idx].item()
 
-                        # Skip padding tokens
+                        # Skip padding tokens (index 0)
                         if target_token == 0:
                             continue
 
@@ -157,12 +157,23 @@ def evaluate_model(model,
                         predicted_word = idx_to_word.get(predicted_token, "<unk>")
                         lev_dist = edit_distance(predicted_word, target_word)
 
+                        # Accuracy computation
+                        is_correct = int(predicted_token == target_token)
+                        correct += is_correct
+                        total += 1
+
+                        # Edit distance computation
+                        total_edit_distance += lev_dist
+                        num_predictions += 1
+
+                        # Save sample to CSV
                         writer.writerow([
                             saved_samples + 1,
                             input_sentence,
                             target_word,
                             predicted_word,
-                            lev_dist
+                            lev_dist,
+                            is_correct  # 1 if correct, 0 if incorrect
                         ])
                         saved_samples += 1
 
@@ -175,17 +186,12 @@ def evaluate_model(model,
                 if saved_samples >= num_samples_to_save:
                     break
 
+    # Compute metrics
     avg_loss = total_loss / len(dataloader) if len(dataloader) > 0 else 0
     perplexity = torch.exp(torch.tensor(avg_loss)).item() if avg_loss > 0 else float("inf")
     accuracy = 100.0 * correct / total if total > 0 else 0
     avg_edit_distance = total_edit_distance / num_predictions if num_predictions > 0 else 0
     eval_time = time.time() - eval_start_time
-
-    with open(summary_file, "w", newline="") as summary_csv:
-      summary_writer = csv.writer(summary_csv)
-      summary_writer.writerow(["Loss", "Perplexity", "Accuracy", "Avg Levenshtein Distance", "Evaluation Time (s)"])
-      summary_writer.writerow([avg_loss, perplexity, accuracy, avg_edit_distance, eval_time])
-
 
     print(f"Evaluation Summary: "
           f"Loss={avg_loss:.4f}, "
@@ -194,8 +200,17 @@ def evaluate_model(model,
           f"Avg Levenshtein Distance={avg_edit_distance:.4f}, "
           f"Time={eval_time:.2f}s")
 
-    return avg_loss, perplexity, accuracy, avg_edit_distance, eval_time
+    with open(output_file, "a", newline="") as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow([])
+        writer.writerow(["Evaluation Summary"])
+        writer.writerow(["Loss (Cross-Entropy)", avg_loss])
+        writer.writerow(["Perplexity", perplexity])
+        writer.writerow(["Accuracy (%)", accuracy])
+        writer.writerow(["Avg Levenshtein Distance", avg_edit_distance])
+        writer.writerow(["Execution Time (s)", eval_time])
 
+    return avg_loss, perplexity, accuracy, avg_edit_distance, eval_time
 
 def plot_training_results(csv_file, experiment_name):
     os.makedirs(f"results/{experiment_name}/plots", exist_ok=True)
@@ -257,46 +272,64 @@ def plot_training_results(csv_file, experiment_name):
 
 
 def plot_aggregated_results(experiment_results, output_folder):
+    """
+    Plots and saves aggregated results for training, evaluation, and test data.
+
+    Parameters:
+    - experiment_results: dict, mapping experiment names to their respective CSV file paths.
+    - output_folder: str, directory to save aggregated plots.
+    """
     os.makedirs(output_folder, exist_ok=True)
 
+    # Define key metrics to track
+    metrics = ["Accuracy", "Perplexity", "Loss (Cross-Entropy)", "Avg Levenshtein", "Execution Time (s)"]
+
+    # Prepare a dataframe to store all results
     all_data = []
-    summary_data = []
-    for experiment, csv_file in experiment_results.items():
-        data = pd.read_csv(csv_file[0])
-        data['Experiment'] = experiment
-        all_data.append(data)
 
-        summary_csv = pd.read_csv(csv_file[1])
-        summary_csv['Experiment'] = experiment
-        summary_data.append(summary_csv)
-    all_data = pd.concat(all_data)
-    summary_data = pd.concat(summary_data)
+    # Load data from all experiments
+    for exp_name, paths in experiment_results.items():
+        for dataset, file_path in paths.items():
+            if os.path.exists(file_path):  # Ensure file exists before reading
+                df = pd.read_csv(file_path)
+                df["Experiment"] = exp_name
+                df["Dataset"] = dataset.capitalize()  # Store as 'Training', 'Evaluation', 'Test'
+                all_data.append(df)
 
-    metrics = ['Accuracy', 'Perplexity', 'Loss (Cross-Entropy)', 'Avg Levenshtein', 'Execution Time (s)']
+    if not all_data:
+        print("No valid experiment data found. Skipping plotting.")
+        return
+
+    # Combine all data into a single DataFrame
+    all_data = pd.concat(all_data, ignore_index=True)
+
+    # Generate plots for each metric
     for metric in metrics:
-        plt.figure(figsize=(10, 6))
-        for experiment in all_data['Experiment'].unique():
-            exp_data = all_data[all_data['Experiment'] == experiment]
-            plt.plot(exp_data['Epoch'], exp_data[metric], marker='o', label=experiment)
-        plt.title(f'{metric} Across Experiments')
-        plt.xlabel('Epoch')
-        plt.ylabel(metric)
-        plt.grid(True)
-        plt.legend()
-        plot_path = os.path.join(output_folder, f"aggregated_{metric.lower().replace(' ', '_')}.png")
-        plt.savefig(plot_path)
-        print(f"Saved aggregated plot to {plot_path}.")
-        plt.close()
+        if metric in all_data.columns:
+            plt.figure(figsize=(12, 6))
 
-    summary_metrics = ['Accuracy', 'Perplexity', 'Loss', 'Avg Levenshtein Distance', 'Evaluation Time (s)']
-    for metric in summary_metrics:
-        plt.figure(figsize=(8, 6))
-        sns.barplot(data=summary_data, x='Experiment', y=metric, palette='viridis')
-        plt.title(f'{metric} by Experiment')
-        plt.xlabel('Experiment')
-        plt.ylabel(metric)
-        plt.grid(axis='y')
-        bar_plot_path = os.path.join(output_folder, f"barplot_{metric.lower().replace(' ', '_')}.png")
-        plt.savefig(bar_plot_path)
-        print(f"Saved bar plot to {bar_plot_path}.")
-        plt.close()
+            for experiment in all_data["Experiment"].unique():
+                exp_data = all_data[all_data["Experiment"] == experiment]
+
+                # Plot training, evaluation, and test results separately
+                for dataset in ["Training", "Evaluation", "Test"]:
+                    subset = exp_data[exp_data["Dataset"] == dataset]
+                    if not subset.empty:
+                        plt.plot(subset["Epoch"], subset[metric], marker='o', linestyle='-',
+                                 label=f"{experiment} - {dataset}")
+
+            plt.title(f'{metric} Across Experiments')
+            plt.xlabel('Epoch')
+            plt.ylabel(metric)
+            plt.grid(True, linestyle="--", alpha=0.6)
+            plt.legend()
+            plt.tight_layout()
+
+            # Save plot
+            plot_filename = f"aggregated_{metric.lower().replace(' ', '_')}.png"
+            plot_path = os.path.join(output_folder, plot_filename)
+            plt.savefig(plot_path)
+            print(f"Saved aggregated plot: {plot_path}")
+            plt.close()
+        else:
+            print(f"Skipping metric {metric} (not found in data).")
