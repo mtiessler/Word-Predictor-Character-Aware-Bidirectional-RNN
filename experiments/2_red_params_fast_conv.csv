@@ -2,7 +2,7 @@ key,value
 BATCH_SIZE,64
 EPOCHS,30
 LEARNING_RATE,0.0005
-CSV_FILE,experiment2_results.csv
+CSV_FILE,2_fast_convergence_results.csv
 MAX_WORD_LEN,15
 MAX_SEQ_LEN,60
 SMOKE_TEST,False
