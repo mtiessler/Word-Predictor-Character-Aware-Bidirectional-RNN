@@ -7,7 +7,6 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from nltk.metrics import edit_distance
 
-
 def train_model(model, dataloader, optimizer, device, epochs, csv_file_path, patience, improvement_threshold):
     criterion = nn.CrossEntropyLoss(ignore_index=0)
     model.train()
@@ -19,8 +18,8 @@ def train_model(model, dataloader, optimizer, device, epochs, csv_file_path, pat
         print(f"Starting Epoch {epoch + 1}/{epochs}...")
         epoch_start_time = time.time()
         total_loss = 0
-        correct = 0
-        total = 0
+        total_correct = 0
+        total_valid = 0
         total_edit_distance = 0
         num_predictions = 0
 
@@ -36,19 +35,25 @@ def train_model(model, dataloader, optimizer, device, epochs, csv_file_path, pat
             outputs = outputs.view(-1, outputs.size(-1))
             targets = targets.view(-1)
 
-            loss = criterion(outputs, targets)
+            valid_mask = targets != criterion.ignore_index
+            valid_outputs = outputs[valid_mask]
+            valid_targets = targets[valid_mask]
+
+            # Compute loss
+            loss = criterion(valid_outputs, valid_targets)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
             optimizer.step()
 
-            predictions = torch.argmax(outputs, dim=1)
-            correct += (predictions == targets).sum().item()
-            total += targets.size(0)
+            # Compute predictions and accuracy
+            predictions = torch.argmax(valid_outputs, dim=1)
+            total_correct += (predictions == valid_targets).sum().item()
+            total_valid += valid_targets.size(0)
             total_loss += loss.item()
 
             # Compute Levenshtein Distance
             idx_to_word = {idx: word for word, idx in dataloader.dataset.word_vocab.items()}
-            for pred, tgt in zip(predictions, targets):
+            for pred, tgt in zip(predictions, valid_targets):
                 pred_word = idx_to_word.get(pred.item(), "<unk>")
                 tgt_word = idx_to_word.get(tgt.item(), "<unk>")
                 if tgt_word != "<pad>":
@@ -57,7 +62,7 @@ def train_model(model, dataloader, optimizer, device, epochs, csv_file_path, pat
 
         avg_loss = total_loss / len(dataloader)
         perplexity = torch.exp(torch.tensor(avg_loss)).item()
-        accuracy = 100.0 * correct / total
+        accuracy = 100.0 * total_correct / total_valid if total_valid > 0 else 0
         avg_edit_distance = total_edit_distance / num_predictions if num_predictions > 0 else 0
         epoch_time = time.time() - epoch_start_time
 
@@ -69,6 +74,7 @@ def train_model(model, dataloader, optimizer, device, epochs, csv_file_path, pat
               f"Loss={avg_loss:.4f}, Perplexity={perplexity:.4f}, Accuracy={accuracy:.2f}%, "
               f"Levenshtein Distance={avg_edit_distance:.4f}, Time={epoch_time:.2f}s")
 
+        # Early stopping logic
         if accuracy - best_accuracy > improvement_threshold:
             best_accuracy = accuracy
             epochs_without_improvement = 0
@@ -81,12 +87,11 @@ def train_model(model, dataloader, optimizer, device, epochs, csv_file_path, pat
 
 
 def evaluate_model(model, dataloader, device, vocab, output_file, num_samples_to_save=50):
-
     criterion = nn.CrossEntropyLoss(ignore_index=0)
     model.eval()
     total_loss = 0
-    correct = 0
-    total = 0
+    total_correct = 0
+    total_valid = 0
     total_edit_distance = 0
     num_predictions = 0
 
@@ -96,7 +101,6 @@ def evaluate_model(model, dataloader, device, vocab, output_file, num_samples_to
     print("Starting Evaluation...")
     eval_start_time = time.time()
 
-    # Open CSV file for logging
     with open(output_file, "w", newline="") as csvfile:
         writer = csv.writer(csvfile)
         writer.writerow(["Sample", "Input Sentence", "Target Word", "Predicted Word", "Levenshtein Distance"])
@@ -104,13 +108,7 @@ def evaluate_model(model, dataloader, device, vocab, output_file, num_samples_to
         saved_samples = 0
 
         with torch.no_grad():
-            for batch in dataloader:
-                if len(batch) == 4:
-                    inputs, targets, char_inputs, sentences = batch
-                else:
-                    inputs, targets, char_inputs = batch
-                    sentences = [f"Sample {i+1}" for i in range(len(targets))]
-
+            for inputs, targets, char_inputs in dataloader:
                 inputs, targets, char_inputs = (
                     inputs.to(device),
                     targets.to(device),
@@ -122,34 +120,37 @@ def evaluate_model(model, dataloader, device, vocab, output_file, num_samples_to
                 outputs = outputs.view(-1, outputs.size(-1))
                 targets = targets.view(-1)
 
+                # Filter valid tokens
+                valid_mask = targets != criterion.ignore_index
+                valid_outputs = outputs[valid_mask]
+                valid_targets = targets[valid_mask]
+
                 # Compute loss
-                loss = criterion(outputs, targets)
+                loss = criterion(valid_outputs, valid_targets)
                 total_loss += loss.item()
 
-                # Compute predictions
-                predictions = torch.argmax(outputs, dim=1)
+                # Compute predictions and accuracy
+                predictions = torch.argmax(valid_outputs, dim=1)
+                total_correct += (predictions == valid_targets).sum().item()
+                total_valid += valid_targets.size(0)
 
-                valid_mask = targets != criterion.ignore_index
-                valid_targets = targets[valid_mask]
-                valid_predictions = predictions[valid_mask]
+                # Save sample predictions
+                if saved_samples < num_samples_to_save:
+                    for pred, tgt in zip(predictions, valid_targets):
+                        target_word = idx_to_word.get(tgt.item(), "<unk>")
+                        predicted_word = idx_to_word.get(pred.item(), "<unk>")
+                        lev_dist = edit_distance(predicted_word, target_word) if target_word != "<pad>" else "N/A"
 
-                valid_sentences = [sentences[i] for i in range(len(sentences)) if valid_mask[i]] if sentences else []
-                for i in range(min(len(valid_targets), num_samples_to_save - saved_samples)):
-                    input_sentence = valid_sentences[i] if i < len(valid_sentences) else "N/A"
-                    target_word = idx_to_word.get(valid_targets[i].item(), "<unk>")
-                    predicted_word = idx_to_word.get(valid_predictions[i].item(), "<unk>")
-                    lev_dist = edit_distance(predicted_word, target_word) if target_word != "<pad>" else "N/A"
+                        writer.writerow([saved_samples + 1, "N/A", target_word, predicted_word, lev_dist])
+                        saved_samples += 1
 
-                    writer.writerow([saved_samples + 1, input_sentence, target_word, predicted_word, lev_dist])
-                    saved_samples += 1
-
-                    if target_word != "<pad>":
-                        total_edit_distance += lev_dist
-                        num_predictions += 1
+                        if target_word != "<pad>":
+                            total_edit_distance += edit_distance(predicted_word, target_word)
+                            num_predictions += 1
 
     avg_loss = total_loss / len(dataloader) if len(dataloader) > 0 else 0
     perplexity = torch.exp(torch.tensor(avg_loss)).item() if avg_loss > 0 else float("inf")
-    accuracy = 100.0 * correct / total if total > 0 else 0
+    accuracy = 100.0 * total_correct / total_valid if total_valid > 0 else 0
     avg_edit_distance = total_edit_distance / num_predictions if num_predictions > 0 else 0
     eval_time = time.time() - eval_start_time
 
@@ -161,7 +162,6 @@ def evaluate_model(model, dataloader, device, vocab, output_file, num_samples_to
           f"Time={eval_time:.2f}s")
 
     return avg_loss, perplexity, accuracy, avg_edit_distance, eval_time
-
 
 def plot_training_results(csv_file, experiment_name):
     os.makedirs(f"results/{experiment_name}/plots", exist_ok=True)

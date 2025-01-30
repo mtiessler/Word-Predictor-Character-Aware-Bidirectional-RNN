@@ -42,10 +42,10 @@ def load_text_datasets():
     print("Loading WikiText-2 dataset...")
     dataset = load_dataset("wikitext", "wikitext-2-raw-v1")
     train_texts = [text for text in dataset["train"]["text"] if text.strip()]
-    val_texts = [text for text in dataset["validation"]["text"] if text.strip()]
+    test_texts = [text for text in dataset["test"]["text"] if text.strip()]
 
-    print(f"Train texts: {len(train_texts)}, Validation texts: {len(val_texts)}")
-    return train_texts, val_texts
+    print(f"Train texts: {len(train_texts)}, Test texts: {len(test_texts)}")
+    return train_texts, test_texts
 
 
 class TextDataset(Dataset):

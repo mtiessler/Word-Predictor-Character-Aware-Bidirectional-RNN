@@ -68,11 +68,10 @@ def smoke_test():
     print("Smoke test passed!")
 
 
-def run_experiment(config_file):
+def run_experiment(experiment_name, config_file):
     print(f"Running experiment with config: {config_file}")
     config = load_config_from_csv(config_file)
 
-    experiment_name = f"{config_file.split('.')[0]}"
     experiment_folder = f"results/{experiment_name}"
     os.makedirs(experiment_folder, exist_ok=True)
 
@@ -93,12 +92,12 @@ def run_experiment(config_file):
         train_texts, word_vocab, char_vocab, tokenizer,
         max_word_len=config["MAX_WORD_LEN"], max_seq_len=config["MAX_SEQ_LEN"]
     )
-    val_dataset = TextDataset(
+    test_dataset = TextDataset(
         val_texts, word_vocab, char_vocab, tokenizer,
         max_word_len=config["MAX_WORD_LEN"], max_seq_len=config["MAX_SEQ_LEN"]
     )
     train_loader = DataLoader(train_dataset, batch_size=config["BATCH_SIZE"], collate_fn=collate_fn, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=config["BATCH_SIZE"], collate_fn=collate_fn)
+    test_loader = DataLoader(test_dataset, batch_size=config["BATCH_SIZE"], collate_fn=collate_fn)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = LSTMWithCacheAndChar(
@@ -118,7 +117,7 @@ def run_experiment(config_file):
     )
 
     evaluation_csv = os.path.join(experiment_folder, f"{experiment_name}_predictions.csv")
-    evaluate_model(model, val_loader, device, word_vocab, evaluation_csv)
+    evaluate_model(model, test_loader, device, word_vocab, evaluation_csv)
 
     plot_training_results(csv_file_path, experiment_name)
 
@@ -126,11 +125,6 @@ def run_experiment(config_file):
 
 
 def main():
-    experiment_configs = [
-        "experiment1_baseline_config.csv",
-        "experiment2_red_params_fast_conv.csv",
-        "experiment3_larger_model.csv"
-    ]
 
     # Check if smoke test should be run
     smoke_test_enabled = os.getenv("SMOKE_TEST", "false").lower() == "true"
@@ -138,10 +132,18 @@ def main():
         smoke_test()
         return
 
+    experiments_dir = os.path.join(os.pardir, "experiments")
+    experiment_configs = {
+        "Fast": os.path.join(experiments_dir, "0_very_fast_experiment.csv"),
+        "Baseline": os.path.join(experiments_dir, "1_baseline_config.csv"),
+        "Reduced Params Fast Conv": os.path.join(experiments_dir, "2_red_params_fast_conv.csv"),
+        "Larger Model": os.path.join(experiments_dir, "3_larger_model.csv"),
+    }
+
     experiment_results = {}
-    for config_file in experiment_configs:
-        result_csv = run_experiment(config_file)
-        experiment_results[config_file.split('.')[0]] = result_csv
+    for exp_name, config_file in experiment_configs.items():
+        result_csv = run_experiment(exp_name, config_file)
+        experiment_results[exp_name] = result_csv
 
     aggregated_results_folder = "results/final_evaluation"
     plot_aggregated_results(experiment_results, aggregated_results_folder)

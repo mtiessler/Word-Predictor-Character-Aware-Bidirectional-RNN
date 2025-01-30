@@ -3,11 +3,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-
-
 class LSTMWithCacheAndChar(nn.Module):
     def __init__(self, word_vocab_size,
                  char_vocab_size,
@@ -17,8 +12,8 @@ class LSTMWithCacheAndChar(nn.Module):
                  char_hidden_dim,
                  num_layers,
                  cache_size,
-                 dropout_rate=0.5,  # Added dropout rate as a parameter
-                 l2_lambda=1e-5):  # Added L2 lambda as a parameter
+                 dropout_rate,
+                 l2_lambda):
         super(LSTMWithCacheAndChar, self).__init__()
         self.word_embedding = nn.Embedding(word_vocab_size, word_embed_dim)
         self.char_embedding = nn.Embedding(char_vocab_size, char_embed_dim)
