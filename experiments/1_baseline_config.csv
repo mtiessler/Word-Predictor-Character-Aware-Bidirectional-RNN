@@ -2,7 +2,7 @@ key,value
 BATCH_SIZE,32
 EPOCHS,50
 LEARNING_RATE,0.001
-CSV_FILE,1_baseline_results.csv
+CSV_FILE,experiment1_results.csv
 MAX_WORD_LEN,10
 MAX_SEQ_LEN,50
 SMOKE_TEST,False
