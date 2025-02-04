@@ -49,7 +49,7 @@ This file defines the LSTM-based model with support for character-aware embeddin
 
 ---
 
-### 3. `trainEval.py`
+### 3. `train_eval.py`
 This file handles the training and evaluation of the model.
 
 - **Functions**:
